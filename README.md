@@ -126,11 +126,16 @@ reports Es/N0, BER, FER, net payload throughput, processing time, and a 95%
 frame-success confidence interval. The measurement convention and the intended
 -22 dB robust-mode target are defined in `docs/snr_conventions.md`.
 
-Aurora's independent DSP pipeline includes an optional deterministic block
-interleaver between convolutional FEC and symbol mapping. The receiver applies
-the inverse permutation before hard- or soft-input FEC decoding. Interleaving
-is disabled by default so the established codec remains the rollback baseline;
-enabling it changes transmitted symbol ordering and adds block latency.
+Aurora's independent DSP pipeline includes a deterministic block interleaver
+between convolutional FEC and symbol mapping. The documented robust simulation
+mode selects BPSK at 31.25 symbols/s, rate-1/2 constraint-length-7 convolutional
+FEC, and a fixed 16-column interleaver. The receiver applies the inverse
+permutation before hard- or soft-input FEC decoding. The simulation UI retains
+an explicit interleaver-off override for controlled A/B tests.
+
+The selection is documented in `docs/mode_definition.md`. It is a development
+definition for reproducible simulation and does not claim an over-the-air
+protocol, signaling format, or interoperability specification.
 
 ## Project structure
 

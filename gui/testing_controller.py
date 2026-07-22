@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from dsp import decode_soft_symbols, encode_payload
 from dsp.symbol_mapper import demap_symbols
+from modem import AURORA_ROBUST_MODE
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,10 +245,10 @@ class SweepConfig:
     frames_per_point: int = 200
     seeds: tuple[int, ...] = (2026, 2027, 2028, 2029)
     reference_bandwidth_hz: float = 2_500.0
-    symbol_rate: float = 31.25
+    symbol_rate: float = AURORA_ROBUST_MODE.symbol_rate
     frequency_offset_hz: float = 0.0
     impairments: ChannelImpairments = AWGN_IMPAIRMENTS
-    interleaver_columns: int | None = None
+    interleaver_columns: int | None = AURORA_ROBUST_MODE.interleaver_columns
 
 
 @dataclass(frozen=True, slots=True)

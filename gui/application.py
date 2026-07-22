@@ -19,6 +19,7 @@ from gui.testing_controller import (
     TestingController,
 )
 from gui.waterfall_view import WaterfallView
+from modem import AURORA_ROBUST_MODE
 from waterfall.model import WaterfallModel
 from util.session_debug_log import SessionDebugLog
 
@@ -257,10 +258,10 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     sweep_stop = tk.DoubleVar(value=10.0)
     sweep_step = tk.DoubleVar(value=2.0)
     sweep_frames = tk.IntVar(value=200)
-    sweep_symbol_rate = tk.DoubleVar(value=31.25)
+    sweep_symbol_rate = tk.DoubleVar(value=AURORA_ROBUST_MODE.symbol_rate)
     sweep_bandwidth = tk.DoubleVar(value=2_500.0)
     sweep_profile = tk.StringVar(value="AWGN only")
-    sweep_interleaver = tk.StringVar(value="Off")
+    sweep_interleaver = tk.StringVar(value="Mode fixed (16)")
     sweep_variables = (
         ("Start dB", sweep_start, -40.0, 20.0, 1.0),
         ("Stop dB", sweep_stop, -40.0, 30.0, 1.0),
@@ -295,15 +296,15 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     ).pack(side=tk.LEFT)
     interleaver_field = ttk.Frame(sweep_controls)
     interleaver_field.grid(row=1, column=2, pady=(5, 0), sticky="w")
-    ttk.Label(interleaver_field, text="Interleaver").pack(
+    ttk.Label(interleaver_field, text="Interleaver test override").pack(
         side=tk.LEFT, padx=(0, 5)
     )
     ttk.Combobox(
         interleaver_field,
         textvariable=sweep_interleaver,
-        values=("Off", "16 columns"),
+        values=("Mode fixed (16)", "Diagnostic off"),
         state="readonly",
-        width=12,
+        width=16,
     ).pack(side=tk.LEFT)
     run_sweep_button = ttk.Button(sweep_controls, text="RUN ROBUSTNESS SWEEP")
     run_sweep_button.grid(row=1, column=3, columnspan=2, padx=(8, 4), sticky="e")
@@ -721,7 +722,9 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 symbol_rate=float(sweep_symbol_rate.get()),
                 impairments=CHANNEL_IMPAIRMENT_PROFILES[sweep_profile.get()],
                 interleaver_columns=(
-                    None if sweep_interleaver.get() == "Off" else 16
+                    None
+                    if sweep_interleaver.get() == "Diagnostic off"
+                    else AURORA_ROBUST_MODE.interleaver_columns
                 ),
             )
             if config.frames_per_point < len(config.seeds):
@@ -741,7 +744,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         )
         session_log.record(
             "ROBUSTNESS_SWEEP_START",
-            modulation=modulation.get(),
+            modulation=AURORA_ROBUST_MODE.modulation.upper(),
             start_snr_db=config.start_snr_db,
             stop_snr_db=config.stop_snr_db,
             step_snr_db=config.step_snr_db,
@@ -757,7 +760,8 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         )
         _append_history(
             history,
-            f"[SWEEP] {modulation.get()} {config.start_snr_db:+.1f} to "
+            f"[SWEEP] {AURORA_ROBUST_MODE.modulation.upper()} "
+            f"{config.start_snr_db:+.1f} to "
             f"{config.stop_snr_db:+.1f} dB, {config.frames_per_point} frames/point, "
             f"{config.impairments.name}, interleaver "
             f"{config.interleaver_columns or 'Off'}.",
@@ -771,7 +775,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 benchmark_results.put(
                     controller.run_snr_sweep(
                         selected_message,
-                        modulation.get(),
+                        AURORA_ROBUST_MODE.modulation,
                         config,
                         should_continue=lambda: not sweep_cancel.is_set(),
                         on_point=on_point,
