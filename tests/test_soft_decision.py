@@ -29,6 +29,20 @@ class SoftDecisionTests(unittest.TestCase):
         )
         self.assertEqual(decoded.payload, b"soft Aurora")
 
+    def test_interleaved_soft_payload_round_trip(self) -> None:
+        transmission = encode_payload(
+            b"interleaved soft path",
+            modulation="bpsk",
+            interleaver_columns=16,
+        )
+        decoded = decode_soft_symbols(
+            transmission.symbols,
+            transmission.modulation,
+            noise_variance=0.1,
+            interleaver_columns=transmission.interleaver_columns,
+        )
+        self.assertEqual(decoded.payload, b"interleaved soft path")
+
 
 if __name__ == "__main__":
     unittest.main()

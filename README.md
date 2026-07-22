@@ -8,8 +8,10 @@ weak-signal operation under real-world HF propagation conditions.
 ## Project status
 
 Aurora is in the initial development stage. The repository currently provides
-the foundational project structure; the modem and desktop application have not
-yet been implemented.
+the foundational project structure and a simulation-only operator interface.
+The interface can exercise the symbol-domain codec locally and animate the
+spectrum and waterfall from a synthetic test signal. It does not open audio or
+radio hardware.
 
 ## Design goals
 
@@ -92,7 +94,43 @@ Aurora includes a Hann-windowed FFT analyzer for real or complex samples, a
 bounded waterfall history, and dark-themed Tkinter spectrum and waterfall
 views. The views expose update APIs for future connection to live audio and
 receiver processing. The current application starts them with an empty display
-and does not open an audio stream automatically.
+and does not open an audio stream automatically. Select **START SYNTHETIC
+SIGNAL** to exercise the current displays without using audio hardware.
+
+## Local operator test
+
+The first operator iteration includes a BPSK/QPSK local codec test. Enter a
+message and select **RUN LOCAL CODEC TEST** to pass it through Aurora framing,
+scrambling, FEC, symbol mapping, soft decoding, and CRC validation. This is a
+local software test only and does not generate an audio waveform or RF signal.
+
+The channel test adds deterministic Clean, Moderate HF, Weak Signal, and Severe
+presets. It can run one to 1,000 symbol-domain frames with injected AWGN and
+carrier rotation, reporting frame success, CRC outcomes, pre-FEC channel bit
+errors, recovered errors, and processing time. **RUN 100 FRAMES** provides a
+repeatable threshold check. Frequency and SNR values in this test are injected,
+not receiver estimates. Timing impairment is unavailable until Aurora has an
+oversampled, pulse-shaped waveform.
+
+Each application run creates a structured debug log in `logs/` named
+`aurora_test_session_YYYYMMDD_HHMMSS_ffffff.log`. Test starts, results, errors,
+injected conditions, frame statistics, bit-error counts, and timing information
+are flushed immediately. Operator message contents are not recorded; only their
+length is included. The latest session log can be reviewed after testing without
+exporting data from the interface.
+
+The **Channel Results** tab also provides a cancellable robustness sweep. Its
+default range is -24 through +10 dB in a 2,500 Hz reference bandwidth, using
+200 frames per point across four deterministic seeds at 31.25 symbols/s. It
+reports Es/N0, BER, FER, net payload throughput, processing time, and a 95%
+frame-success confidence interval. The measurement convention and the intended
+-22 dB robust-mode target are defined in `docs/snr_conventions.md`.
+
+Aurora's independent DSP pipeline includes an optional deterministic block
+interleaver between convolutional FEC and symbol mapping. The receiver applies
+the inverse permutation before hard- or soft-input FEC decoding. Interleaving
+is disabled by default so the established codec remains the rollback baseline;
+enabling it changes transmitted symbol ordering and adds block latency.
 
 ## Project structure
 

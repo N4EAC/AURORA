@@ -31,6 +31,7 @@ class WaterfallView(ttk.Frame):
             height=model.history_size,
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Configure>", lambda event: self._render())
 
     def add_spectrum(self, power_db: np.ndarray) -> None:
         """Append and render one waterfall spectrum row."""
@@ -46,4 +47,7 @@ class WaterfallView(ttk.Frame):
         image.put(" ".join(rows))
         self._image = image
         self.canvas.delete("waterfall")
-        self.canvas.create_image(0, 0, image=image, anchor=tk.NW, tags="waterfall")
+        y_position = max(0, self.canvas.winfo_height() - values.shape[0])
+        self.canvas.create_image(
+            0, y_position, image=image, anchor=tk.NW, tags="waterfall"
+        )
