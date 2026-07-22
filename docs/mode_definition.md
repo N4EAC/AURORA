@@ -19,6 +19,9 @@ mode identification, parameter negotiation, or a transmitted mode header.
 | Trellis termination | Six zero tail bits |
 | Interleaver | Deterministic ragged block, 16 columns |
 | Interleaver placement | After FEC, before symbol mapping |
+| Experimental audio sample rate | 12,000 samples/s |
+| Experimental audio carrier | 1,500 Hz |
+| Experimental pulse shape | Root-raised cosine, 0.35 roll-off, 8-symbol span |
 
 The corresponding immutable Python definition is
 `modem.mode_definition.AURORA_ROBUST_MODE`.
@@ -44,3 +47,7 @@ This definition does not specify an occupied waveform, pulse shaping, carrier
 frequency, preamble, synchronization sequence, frame timing, on-air mode ID,
 parameter negotiation, or interoperability promise. Those require separate
 design, implementation, and over-the-air validation.
+
+The provisional offline audio realization is documented separately in
+`docs/waveform_experiment.md` so waveform experiments do not imply that these
+values are a frozen transmission protocol.

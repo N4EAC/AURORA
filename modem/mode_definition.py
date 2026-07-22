@@ -20,6 +20,11 @@ class ModeDefinition:
     fec_generator_polynomials: tuple[int, ...]
     fec_terminated: bool
     interleaver_columns: int
+    audio_sample_rate: int
+    audio_carrier_hz: float
+    pulse_shape: str
+    pulse_rolloff: float
+    pulse_span_symbols: int
     interleaver_geometry_signaled: bool = False
 
     def __post_init__(self) -> None:
@@ -35,6 +40,18 @@ class ModeDefinition:
             raise ValueError("At least one FEC generator polynomial is required")
         if self.interleaver_columns <= 0:
             raise ValueError("Interleaver columns must be positive")
+        if self.audio_sample_rate <= 0:
+            raise ValueError("Audio sample rate must be positive")
+        if self.audio_sample_rate / self.symbol_rate % 1.0:
+            raise ValueError("Waveform requires an integer samples-per-symbol ratio")
+        if not 0.0 < self.audio_carrier_hz < self.audio_sample_rate / 2.0:
+            raise ValueError("Audio carrier must be below the Nyquist frequency")
+        if self.pulse_shape != "root_raised_cosine":
+            raise ValueError("Unsupported pulse shape")
+        if not 0.0 < self.pulse_rolloff <= 1.0:
+            raise ValueError("Pulse roll-off must be between zero and one")
+        if self.pulse_span_symbols <= 0 or self.pulse_span_symbols % 2:
+            raise ValueError("Pulse span must be a positive even symbol count")
         if self.interleaver_geometry_signaled:
             raise ValueError("Aurora has no signaling protocol for mode geometry")
 
@@ -49,4 +66,9 @@ AURORA_ROBUST_MODE = ModeDefinition(
     fec_generator_polynomials=(0o171, 0o133),
     fec_terminated=True,
     interleaver_columns=16,
+    audio_sample_rate=12_000,
+    audio_carrier_hz=1_500.0,
+    pulse_shape="root_raised_cosine",
+    pulse_rolloff=0.35,
+    pulse_span_symbols=8,
 )

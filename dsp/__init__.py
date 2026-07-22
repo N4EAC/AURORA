@@ -9,6 +9,13 @@ from dsp.core import (
 from dsp.framing import Frame, FrameError
 from dsp.interleaver import block_deinterleave, block_interleave
 from dsp.receiver import AuroraReceiver, ReceiverConfig, ReceiverDiagnostics, ReceiverResult
+from dsp.waveform import (
+    WaveformDiagnostics,
+    WaveformResult,
+    demodulate_audio,
+    modulate_audio,
+    occupied_bandwidth_hz,
+)
 
 __all__ = [
     "EncodedTransmission",
@@ -23,4 +30,9 @@ __all__ = [
     "encode_payload",
     "block_deinterleave",
     "block_interleave",
+    "WaveformDiagnostics",
+    "WaveformResult",
+    "demodulate_audio",
+    "modulate_audio",
+    "occupied_bandwidth_hz",
 ]

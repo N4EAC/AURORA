@@ -41,8 +41,14 @@ The initial bit-level DSP core provides:
 - Normalized BPSK and Gray-coded QPSK symbol mapping
 - A composable payload-to-symbol and symbol-to-payload pipeline
 
-This layer does not yet generate audio waveforms or implement filtering,
-automatic gain control, filtering, or waveform modulation.
+The generic bit-level core remains independent of waveform filtering and
+automatic gain control.
+
+An experimental offline path now converts the robust-mode BPSK symbols into
+12 kHz real-valued audio using root-raised-cosine pulse shaping and recovers
+them with preamble acquisition, matched filtering, and residual carrier-offset
+correction. This batch-only path uses in-memory buffers and does not open an
+audio device or control a radio. See `docs/waveform_experiment.md`.
 
 ## Receiver
 
