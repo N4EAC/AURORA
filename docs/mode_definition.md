@@ -7,6 +7,10 @@ development and symbol-domain testing. It is **not** an over-the-air protocol
 specification. Aurora does not yet define waveform filtering, acquisition,
 mode identification, parameter negotiation, or a transmitted mode header.
 
+This 31.25-symbol/s selection remains the Normal robust simulation baseline. It
+is not the final Deep-mode configuration and does not establish the active
+-24 dB performance objective defined in `docs/performance_targets.md`.
+
 ## Selected parameters
 
 | Parameter | Development selection |

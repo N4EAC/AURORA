@@ -6,6 +6,7 @@ from dsp.core import (
     decode_transmission,
     encode_payload,
 )
+from dsp.audio_channel import AudioChannelConfig, apply_audio_channel
 from dsp.framing import Frame, FrameError
 from dsp.interleaver import block_deinterleave, block_interleave
 from dsp.receiver import AuroraReceiver, ReceiverConfig, ReceiverDiagnostics, ReceiverResult
@@ -19,6 +20,7 @@ from dsp.waveform import (
 
 __all__ = [
     "EncodedTransmission",
+    "AudioChannelConfig",
     "Frame",
     "FrameError",
     "AuroraReceiver",
@@ -30,6 +32,7 @@ __all__ = [
     "encode_payload",
     "block_deinterleave",
     "block_interleave",
+    "apply_audio_channel",
     "WaveformDiagnostics",
     "WaveformResult",
     "demodulate_audio",

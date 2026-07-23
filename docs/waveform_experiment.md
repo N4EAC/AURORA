@@ -7,6 +7,10 @@ device, key a transmitter, control a radio, or define an over-the-air protocol.
 Its purpose is to connect Aurora's existing symbol-domain codec to real-valued
 audio samples under repeatable test conditions.
 
+The active performance objectives and reference measurement conditions are
+defined in `docs/performance_targets.md`. This waveform is a test vehicle and
+must not be treated as proof that either the Normal or Deep objective is met.
+
 ## Provisional waveform
 
 | Parameter | Experimental value |
@@ -50,5 +54,34 @@ requirement to spread this BPSK signal artificially.
 - Timing acquisition searches integer audio-sample phases.
 - The payload length is known out of band by the test harness.
 - No automatic gain control or interference rejection is implemented.
-- No sound-card clock mismatch is modeled.
+- Clock mismatch uses provisional batch resampling rather than a tracking loop.
 - No interoperability or regulatory emission claim is made.
+
+## Offline robustness harness
+
+`dsp/audio_channel.py` provides deterministic real-audio impairments without
+opening a sound device. It supports reference-bandwidth AWGN, fractional
+sample displacement, sample-clock error in parts per million, delayed
+multipath, slow fading, impulses, and amplitude scaling.
+
+For real white noise, the harness converts requested SNR in reference
+bandwidth `B` to total sampled-noise variance using:
+
+```text
+variance = signal_power / SNR_linear * sample_rate / (2 * B)
+```
+
+Audio-domain results are labeled `audio_sim`; they must not be mixed with
+earlier `symbol_awgn` or `symbol_hf_sim` results.
+
+Run the conservative command-line check with:
+
+```powershell
+.\.venv\Scripts\python.exe -m modem.audio_robustness
+```
+
+Optional `--message`, `--frames`, and `--snr-db` arguments are available. The
+command writes structured events to the ignored session-log directory. It does
+not initialize Tkinter, sounddevice, CAT, PTT, or serial transport. Audio-domain
+sweeps intentionally use few frames because 384 samples per symbol makes them
+substantially more expensive than symbol-domain tests.

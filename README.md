@@ -23,6 +23,12 @@ radio hardware.
   and FEC corrections
 - A modular architecture suitable for long-term expansion
 
+Aurora's active weak-signal research target is CRC-confirmed delivery of a
+20-byte Deep-mode reference message at -24 dB SNR in a 2,500 Hz reference
+bandwidth, with a desired total transmission time of 30 to 40 seconds or less.
+The initial realistic-HF target is -21 to -22 dB. These are development
+objectives, not current capability claims. See `docs/performance_targets.md`.
+
 ## Technology
 
 - Python 3
@@ -49,6 +55,34 @@ An experimental offline path now converts the robust-mode BPSK symbols into
 them with preamble acquisition, matched filtering, and residual carrier-offset
 correction. This batch-only path uses in-memory buffers and does not open an
 audio device or control a radio. See `docs/waveform_experiment.md`.
+
+The offline robustness harness adds deterministic real-audio AWGN, timing
+displacement, sample-clock error, multipath, fading, impulsive noise, and level
+variation. Its results use the `audio_sim` domain so they remain distinct from
+symbol-domain measurements. A small logged check can be run with
+`.\.venv\Scripts\python.exe -m modem.audio_robustness`; it remains offline and
+does not initialize audio or radio hardware.
+
+An additional `extreme_research` study compares acquisition-only BPSK and
+continuous-phase 4-GFSK candidates at 7.8125 symbols/s. It calculates a
+theoretical rate-1/8 coding budget but deliberately provides no such encoder or
+decoder and reports no payload success. Run it with
+`.\.venv\Scripts\python.exe -m modem.extreme_mode_study`. See
+`docs/extreme_mode_study.md` for assumptions and limitations.
+
+The former -30 dB exploration is retained for acquisition research but is no
+longer an active product requirement. It provides no payload or CRC result.
+
+The extreme acquisition CLI supports deterministic AWGN, combined HF, fading,
+multipath, clock-error, and impulsive-noise profiles. Signal and noise-only
+trial counts are independent, cancellation preserves completed counts, and
+Wilson intervals expose the uncertainty of small studies. These remain
+acquisition-only simulations.
+
+The extreme receiver can also compare discrete sample-clock hypotheses while
+accounting for their induced passband carrier shift. A cancellable standard ppm
+sweep reports selected clock error and explicitly fails complete acquisition
+when the injected error is not represented by the search grid.
 
 ## Receiver
 
