@@ -58,12 +58,7 @@ Before making ANY changes:
 
 3\. Summarize the project rules.
 
-4\. Wait for explicit approval before creating, modifying, renaming, or deleting any files.
-
-
-
-Never assume approval.
-
+4\. Codex may create and modify files inside D:\_projects\AURORA without prior approval when the changes directly support the user’s requested task. Codex must still obtain explicit approval before deleting files, performing destructive operations, changing files outside the project, committing, tagging, pushing, or interacting with real radio hardware.
 
 
 \---
@@ -321,10 +316,6 @@ Explain:
 \- why
 
 \- where
-
-
-
-Then wait for approval.
 
 
 

@@ -231,6 +231,30 @@ Run the automated tests with:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+## Deep payload research
+
+Aurora includes an offline, deterministic 20-byte payload feasibility study for
+the -24 dB Deep objective. It compares a rate-1/2 convolutional baseline with
+provisional rate-1/4 repeated-bit candidates, soft combining, and fixed
+interleaving. It exercises acquisition, carrier and clock hypotheses, audio
+channel impairments, soft decoding, and CRC validation without opening audio or
+radio hardware.
+
+The design and measurement limits are documented in
+`docs/deep_mode_study.md`. These experiments do not define or claim an
+over-the-air protocol.
+
+The current implementation status, completed validation, end-of-day
+conclusions, and prioritized next steps are recorded in
+`docs/development_status.md`.
+
+Long campaigns use `modem.deep_validation.DeepValidationConfig` and
+`run_deep_validation`. The runner supports deterministic batch ranges,
+cancellation, confidence intervals, runtime measurements, optional traced peak
+memory, carrier and clock grids, named HF profiles, and an optional
+CRC-validated fading fallback. The current K10 evidence does not establish the
+locked -24 dB acceptance target.
+
 ## Versioning
 
 Aurora uses semantic versioning. The first development release will begin in

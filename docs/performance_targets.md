@@ -71,3 +71,38 @@ CRC, or define an over-the-air protocol.
 No production mode should adopt the provisional 7.8125-symbol/s waveforms or
 ideal rate-1/8 budget solely because acquisition was observed in a small AWGN
 study. Any reuse requires evaluation against the active -24 dB Deep objective.
+
+## Deep payload feasibility implementation
+
+The `deep_payload_research` experiment now provides a complete offline
+20-byte payload path at 31.25 symbols/s. It compares the existing rate-1/2
+convolutional code with provisional rate-1/4 repeated-bit constructions using
+soft-likelihood combining and fixed 16- or 32-column interleaving.
+
+This implementation exists to measure feasibility against the objectives above.
+It does not freeze the FEC, framing, preamble, interleaver, or waveform and does
+not define an over-the-air Aurora protocol. The repeated-bit construction is a
+baseline for comparison with stronger purpose-designed low-rate codes.
+
+The first locked K10 campaign delivered 897 of 1,000 unknown-timing AWGN
+frames at -24 dB. This is 89.7%, with a 95% Wilson interval of approximately
+87.66% to 91.43%, and therefore does not satisfy the 90% acceptance criterion.
+Zero false decodes were observed in 1,000 noise-only trials, which provides only
+a 0.383% upper confidence bound. Fading and multipath results were substantially
+worse, so -24 dB remains a research target rather than an Aurora capability.
+
+The revised fading experiment uses a confidence-qualified, CRC-validated
+fallback instead of replacing primary soft decisions. In paired trials it
+preserved AWGN delivery at 90 of 100, improved fading-only delivery from 31 of
+100 to 43 of 100, and left multipath delivery unchanged at 17 of 40. Zero false
+decodes occurred in 1,000 disjoint noise-only trials. The fallback remains
+disabled by default because these modeled results do not establish a
+real-channel capability.
+
+Broader 12-frame screens found fallback gains primarily in faster or deeper
+fading. Shallow fading and the moderate composite profile were unchanged;
+severe composite conditions remained acquisition-limited. All four unknown
+carrier/clock corners decoded in AWGN, while only two of four decoded when
+reference-depth fading was added. Synchronization under severe combined
+conditions is therefore a higher priority than further fallback threshold
+tuning.
