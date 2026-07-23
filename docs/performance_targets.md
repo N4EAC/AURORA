@@ -106,3 +106,18 @@ carrier/clock corners decoded in AWGN, while only two of four decoded when
 reference-depth fading was added. Synchronization under severe combined
 conditions is therefore a higher priority than further fallback threshold
 tuning.
+
+A subsequent time-diverse acquisition fallback combines the existing preamble
+and pilots without adding airtime or occupied bandwidth. With an unknown
+0/+75 ppm clock search and two-stage signal gating, it improved the established
+severe-profile result from 0/12 to 3/12 while preserving AWGN delivery at
+90/100. Zero false decodes occurred in an initial 100-trial noise screen. This
+is a research result only; larger noise and severe-profile campaigns are
+required.
+
+With acquisition largely restored, an equal-airtime interleaver comparison
+found 45/100 severe-profile delivery at 16 columns, versus 29/100 at 32 columns
+and 24/100 at 64 columns. The 16-column candidate delivered 88/100 in the
+established AWGN set versus 90/100 for 32 columns, so the apparent AWGN
+difference requires a larger paired campaign. No mode geometry is changed by
+this result.

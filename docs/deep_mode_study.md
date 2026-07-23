@@ -206,6 +206,52 @@ did not recover either failed frame. This small screen reinforces that the
 fallback can repair some post-acquisition fading errors but does not address
 the severe-profile synchronization limit.
 
+### Time-diverse acquisition fallback
+
+The first severe-channel acquisition experiment preserves the original
+preamble-only receiver as the primary path. If that path fails its score or
+CRC checks, an optional fallback noncoherently combines the existing preamble
+and distributed pilots across the frame. The calibrated fallback requires a
+coherent score of at least 1.0, a time-diversity score of at least 0.37, CRC
+validation, and an unknown 0/+75 ppm clock search for the severe profile.
+
+This reuses existing known symbols and adds no airtime or bandwidth. Twelve
+severe signals scored 0.379 to 0.518 on the diversity statistic, while 30
+sampled noise trials scored 0.211 to 0.359.
+
+On the established severe-profile seeds, the original configuration delivered
+0/12. Clock search plus a lower CRC-protected coherent gate delivered 2/12,
+and time-diverse acquisition added one recovery for 3/12. Two successful
+frames also used fading equalization. The fallback-only architecture preserved
+AWGN delivery at 90/100, and an initial 100-trial noise screen produced zero
+false decodes.
+
+The diversity gate reduced noise-screen runtime by approximately 3.6 times
+compared with an unqualified lower coherent gate. Severe research runs still
+required approximately 6.2 to 8.4 seconds per frame per worker. The feature
+remains disabled by default and does not support a capability claim.
+
+### Severe-profile interleaver comparison
+
+Once time-diverse acquisition reduced severe-profile acquisition failures to
+3/100, interleaver geometry became the next controlled variable. All candidates
+used the same K10 rate-1/4 code, 996 coded symbols, waveform, airtime, energy,
+and bandwidth.
+
+On 12 screening seeds, 16, 32, 64, and 128 columns delivered 4, 3, 4, and 2
+frames respectively. The promoted 100-seed comparisons delivered:
+
+- 16 columns: 45/100 severe and 88/100 AWGN;
+- 32 columns: 29/100 severe and 90/100 AWGN;
+- 64 columns: 24/100 severe.
+
+The 16-column geometry substantially improves this severe fading model, but
+its two-frame AWGN difference is unresolved at 100 trials. It produced zero
+false decodes in an initial 100-trial noise screen. Sixteen columns are
+therefore a provisional research candidate, not a new mode definition. A
+larger paired AWGN campaign is required before changing the documented robust
+mode geometry.
+
 Normal execution took approximately 1.4 to 1.8 seconds per frame per worker.
 An instrumented frame took 5.15 seconds and reached 28,182,286 bytes of traced
 peak memory. A receive-only VB-Cable loopback at 12 kHz decoded successfully.

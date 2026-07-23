@@ -109,3 +109,23 @@ reference-depth fading was added, two of four decoded in both modes.
 6. Validate through real sound hardware and a controlled radio channel before
    enabling the fading fallback or making sensitivity claims.
 
+## Post-checkpoint acquisition experiment
+
+The first prioritized synchronization experiment retained the original
+receiver and added a fallback that combines the existing preamble and pilots
+noncoherently across time. It adds no waveform overhead or bandwidth.
+
+On the established severe-profile seeds, adding unknown 0/+75 ppm clock search,
+a 1.0 coherent fallback gate, and a 0.37 diversity gate improved delivery from
+0/12 to 3/12. The primary AWGN result remained 90/100. An initial 100-trial
+noise screen produced zero false decodes. The result identifies clock search,
+time-separated acquisition evidence, and CRC-arbitrated fallback as a useful
+direction, but the severe sample remains small and processing cost is high.
+
+The following 100-seed campaign confirmed 29/100 severe-profile delivery for
+the acquisition fallback, compared with 0/100 for the original receiver.
+Interleaver-only comparisons then delivered 45/100 at 16 columns, 29/100 at
+32 columns, and 24/100 at 64 columns. The 16-column candidate delivered 88/100
+on the established AWGN seeds, compared with 90/100 at 32 columns, and zero
+false decodes in 100 initial noise trials. The 16-column geometry remains
+provisional pending larger AWGN evidence.
