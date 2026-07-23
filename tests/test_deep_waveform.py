@@ -154,6 +154,24 @@ class DeepWaveformTests(unittest.TestCase):
                 fading_confidence_threshold=0.0,
             )
 
+    def test_time_diverse_acquisition_recovers_clean_payload(self) -> None:
+        payload = b"Aurora Deep message!"
+        encoded = encode_deep_payload(payload)
+        audio = modulate_deep_audio(
+            encoded.bits,
+            leading_silence_samples=731,
+        )
+        candidates = recover_deep_candidate_likelihoods(
+            audio,
+            len(encoded.bits),
+            acquisition_diversity=True,
+        )
+        decoded = decode_deep_likelihoods(
+            candidates[0].likelihoods,
+            encoded.config,
+        )
+        self.assertEqual(decoded.payload, payload)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
 import unittest
 
+from dsp.deep_codec import DeepCodecConfig, K10_RATE_QUARTER_GENERATORS
 from modem.deep_validation import DeepValidationConfig, run_deep_validation
 
 
@@ -53,6 +54,14 @@ class DeepValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confidence threshold"):
             DeepValidationConfig(fading_confidence_threshold=0.0)
 
+    def test_acquisition_diversity_threshold_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "diversity score threshold"):
+            DeepValidationConfig(acquisition_diversity_score_threshold=1.1)
+
+    def test_acquisition_diversity_coherent_threshold_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "coherent threshold"):
+            DeepValidationConfig(acquisition_diversity_coherent_threshold=0.0)
+
     def test_equalized_fallback_preserves_clean_decode(self) -> None:
         result = run_deep_validation(
             DeepValidationConfig(
@@ -64,6 +73,24 @@ class DeepValidationTests(unittest.TestCase):
         )
         self.assertEqual(result.decoded, 1)
         self.assertEqual(result.fading_equalized_trials, 0)
+
+    def test_alternate_interleaver_geometry_preserves_clean_decode(self) -> None:
+        codec = DeepCodecConfig(
+            1,
+            64,
+            "native_rate_quarter",
+            10,
+            K10_RATE_QUARTER_GENERATORS,
+        )
+        result = run_deep_validation(
+            DeepValidationConfig(
+                signal_trials=1,
+                noise_trials=0,
+                snr_db=20.0,
+                codec=codec,
+            )
+        )
+        self.assertEqual(result.decoded, 1)
 
 
 if __name__ == "__main__":

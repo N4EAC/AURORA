@@ -1,6 +1,7 @@
 """Offline BPSK audio waveform support for Aurora Deep-mode research."""
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
@@ -40,6 +41,7 @@ class DeepWaveformResult:
     erased_symbol_percent: float = 0.0
     fading_equalization_enabled: bool = False
     channel_variation_confidence: float = 0.0
+    acquisition_diversity_score: float = 0.0
 
 
 def bits_to_bpsk(bits: tuple[int, ...] | list[int]) -> np.ndarray:
@@ -344,6 +346,66 @@ def _known_symbol_geometry(
     return np.concatenate(positions), np.concatenate(references)
 
 
+def _known_symbol_groups(
+    payload_symbol_count: int,
+) -> tuple[tuple[int, np.ndarray], ...]:
+    """Return the preamble and time-separated pilots as acquisition groups."""
+    preamble = acquisition_symbols().astype(np.complex128)
+    pilot = deep_pilot_symbols()
+    groups: list[tuple[int, np.ndarray]] = [(0, preamble)]
+    cursor = len(preamble)
+    remaining = payload_symbol_count
+    while remaining:
+        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        cursor += block_size
+        remaining -= block_size
+        if remaining:
+            groups.append((cursor, pilot))
+            cursor += len(pilot)
+    return tuple(groups)
+
+
+def _normalized_group_metric(
+    symbols: np.ndarray,
+    final_start: int,
+    groups: tuple[tuple[int, np.ndarray], ...],
+) -> np.ndarray:
+    """Combine time-separated known groups without coherent phase dependence."""
+    combined = np.zeros(final_start + 1, dtype=np.float64)
+    for offset, reference in groups:
+        shifted = symbols[offset:]
+        correlation = np.correlate(shifted, reference, mode="valid")[
+            : final_start + 1
+        ]
+        energy = np.convolve(
+            np.abs(shifted) ** 2,
+            np.ones(len(reference)),
+            mode="valid",
+        )[: final_start + 1]
+        combined += np.abs(correlation) / np.sqrt(
+            np.maximum(energy * len(reference), np.finfo(float).tiny)
+        )
+    return combined / len(groups)
+
+
+def _recovered_group_score(
+    symbols: np.ndarray,
+    groups: tuple[tuple[int, np.ndarray], ...],
+) -> float:
+    """Measure noncoherent agreement with known groups across one frame."""
+    scores = []
+    for offset, reference in groups:
+        received = symbols[offset : offset + len(reference)]
+        denominator = math.sqrt(
+            max(
+                float(np.sum(np.abs(received) ** 2)) * len(reference),
+                np.finfo(float).tiny,
+            )
+        )
+        scores.append(float(abs(np.vdot(reference, received)) / denominator))
+    return float(np.mean(scores))
+
+
 def _fading_weighted_symbols(
     symbols: np.ndarray,
     payload_symbol_count: int,
@@ -473,6 +535,7 @@ def recover_deep_candidate_likelihoods(
     erasure_gain_ratio: float = 0.0,
     fading_activation_gain_ratio: float = 0.6,
     fading_confidence_threshold: float = 1.0,
+    acquisition_diversity: bool = False,
 ) -> tuple[DeepWaveformResult, ...]:
     """Return a bounded list ranked by coherent preamble-plus-pilot energy."""
     if min(acquisition_peaks, timing_step_samples, decode_candidates) <= 0:
@@ -490,6 +553,7 @@ def recover_deep_candidate_likelihoods(
         + deep_pilot_overhead(payload_bit_count)
     )
     known_positions, known_reference = _known_symbol_geometry(payload_bit_count)
+    known_groups = _known_symbol_groups(payload_bit_count)
     candidates: list[tuple[float, DeepWaveformResult]] = []
 
     for clock_ppm in clock_search_ppm:
@@ -504,17 +568,27 @@ def recover_deep_candidate_likelihoods(
                 final_start = len(symbols) - waveform_count
                 if final_start < 0:
                     continue
-                correlation = np.correlate(symbols, preamble, mode="valid")[
-                    : final_start + 1
-                ]
-                energy = np.convolve(
-                    np.abs(symbols) ** 2,
-                    np.ones(len(preamble)),
-                    mode="valid",
-                )[: final_start + 1]
-                metrics = np.abs(correlation) / np.sqrt(
-                    np.maximum(energy * len(preamble), np.finfo(float).tiny)
-                )
+                if acquisition_diversity:
+                    metrics = _normalized_group_metric(
+                        symbols,
+                        final_start,
+                        known_groups,
+                    )
+                else:
+                    correlation = np.correlate(
+                        symbols, preamble, mode="valid"
+                    )[: final_start + 1]
+                    energy = np.convolve(
+                        np.abs(symbols) ** 2,
+                        np.ones(len(preamble)),
+                        mode="valid",
+                    )[: final_start + 1]
+                    metrics = np.abs(correlation) / np.sqrt(
+                        np.maximum(
+                            energy * len(preamble),
+                            np.finfo(float).tiny,
+                        )
+                    )
                 index = int(np.argmax(metrics))
                 raw_peaks.append(
                     (float(metrics[index]), phase + index * ratio)
@@ -568,6 +642,10 @@ def recover_deep_candidate_likelihoods(
                             + phase
                         )
                     )
+                    diversity_score = _recovered_group_score(
+                        carrier_corrected,
+                        known_groups,
+                    )
                     minimum_gain = 1.0
                     fade_depth_db = erased_percent = 0.0
                     fading_equalization_applied = False
@@ -615,6 +693,7 @@ def recover_deep_candidate_likelihoods(
                         erased_percent,
                         fading_equalization_applied,
                         variation_confidence,
+                        diversity_score,
                     )
                     candidates.append((coherent_score, result))
     candidates.sort(key=lambda item: item[0], reverse=True)

@@ -54,6 +54,7 @@ class DeepValidationConfig:
     snr_db: float = -24.0
     reference_bandwidth_hz: float = 2_500.0
     payload: bytes = REFERENCE_PAYLOAD
+    codec: DeepCodecConfig = K10_DEEP_CODEC
     profile: DeepChannelProfile = DEEP_CHANNEL_PROFILES["AWGN reference"]
     seed_base: int = 50_000
     leading_silence_samples: int = 731
@@ -67,6 +68,9 @@ class DeepValidationConfig:
     erasure_gain_ratio: float = 0.0
     fading_activation_gain_ratio: float = 0.6
     fading_confidence_threshold: float = 1.0
+    acquisition_diversity: bool = False
+    acquisition_diversity_score_threshold: float = 0.37
+    acquisition_diversity_coherent_threshold: float = 1.0
 
     def __post_init__(self) -> None:
         if min(self.signal_trials, self.noise_trials, self.start_trial) < 0:
@@ -94,6 +98,14 @@ class DeepValidationConfig:
             )
         if self.fading_confidence_threshold <= 0.0:
             raise ValueError("Fading confidence threshold must be positive")
+        if not 0.0 <= self.acquisition_diversity_score_threshold <= 1.0:
+            raise ValueError(
+                "Acquisition diversity score threshold must be between zero and one"
+            )
+        if self.acquisition_diversity_coherent_threshold <= 0.0:
+            raise ValueError(
+                "Acquisition diversity coherent threshold must be positive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +130,7 @@ class DeepValidationResult:
     mean_erased_symbol_percent: float
     fading_equalized_trials: int
     mean_channel_variation_confidence: float
+    mean_acquisition_diversity_score: float
     measurement_domain: str = "deep_k10_validation"
     over_the_air_protocol: bool = False
 
@@ -155,7 +168,7 @@ def _decode_candidates(
     audio: AudioBuffer,
     coded_bit_count: int,
     config: DeepValidationConfig,
-) -> tuple[bool, bool, bool, float, float, bool, float]:
+) -> tuple[bool, bool, bool, float, float, bool, float, float]:
     common_options = {
         "clock_search_ppm": config.clock_search_ppm,
         "frequency_search_hz": config.frequency_search_hz,
@@ -163,45 +176,52 @@ def _decode_candidates(
         "fading_activation_gain_ratio": config.fading_activation_gain_ratio,
         "fading_confidence_threshold": config.fading_confidence_threshold,
     }
-    baseline_candidates = recover_deep_candidate_likelihoods(
+    primary_candidates = recover_deep_candidate_likelihoods(
         audio,
         coded_bit_count,
         fading_equalization=False,
+        acquisition_diversity=False,
         **common_options,
     )
-    if not baseline_candidates:
-        return False, False, False, 0.0, 0.0, False, 0.0
-    if (
-        baseline_candidates[0].acquisition_score
-        < config.acquisition_score_threshold
-    ):
-        return False, False, False, 0.0, 0.0, False, 0.0
-    experimental_candidates: tuple[DeepWaveformResult, ...] = ()
-    if config.fading_equalization:
-        recovered = recover_deep_candidate_likelihoods(
+    if not primary_candidates:
+        return False, False, False, 0.0, 0.0, False, 0.0, 0.0
+    primary_acquired = (
+        primary_candidates[0].acquisition_score
+        >= config.acquisition_score_threshold
+    )
+    diversity_candidates: tuple[DeepWaveformResult, ...] = ()
+    diversity_acquired = False
+    if config.acquisition_diversity and not primary_acquired:
+        diversity_candidates = recover_deep_candidate_likelihoods(
             audio,
             coded_bit_count,
-            fading_equalization=True,
+            fading_equalization=False,
+            acquisition_diversity=True,
             **common_options,
         )
-        experimental_candidates = tuple(
-            candidate
-            for candidate in recovered
-            if candidate.fading_equalization_enabled
+        diversity_acquired = bool(diversity_candidates) and (
+            diversity_candidates[0].acquisition_score
+            >= config.acquisition_diversity_coherent_threshold
+        ) and (
+            diversity_candidates[0].acquisition_diversity_score
+            >= config.acquisition_diversity_score_threshold
         )
-    variation_confidence = max(
-        (
-            candidate.channel_variation_confidence
-            for candidate in experimental_candidates
-        ),
-        default=0.0,
+    diversity_score = (
+        diversity_candidates[0].acquisition_diversity_score
+        if diversity_candidates
+        else primary_candidates[0].acquisition_diversity_score
     )
-    candidates = baseline_candidates + experimental_candidates
-    for candidate in candidates:
+    if not primary_acquired and not diversity_acquired:
+        return False, False, False, 0.0, 0.0, False, 0.0, diversity_score
+
+    baseline_candidates = (
+        primary_candidates if primary_acquired else diversity_candidates
+    )
+    for candidate in baseline_candidates:
         try:
             frame = decode_deep_likelihoods(
                 candidate.likelihoods,
-                K10_DEEP_CODEC,
+                config.codec,
             )
         except (FrameError, ValueError):
             continue
@@ -211,8 +231,48 @@ def _decode_candidates(
             frame.payload == config.payload,
             candidate.minimum_relative_gain,
             candidate.erased_symbol_percent,
-            candidate.fading_equalization_enabled,
+            False,
+            0.0,
+            diversity_score,
+        )
+    experimental_candidates: tuple[DeepWaveformResult, ...] = ()
+    if config.fading_equalization:
+        experimental_candidates = recover_deep_candidate_likelihoods(
+            audio,
+            coded_bit_count,
+            fading_equalization=True,
+            acquisition_diversity=diversity_acquired,
+            **common_options,
+        )
+        experimental_candidates = tuple(
+            candidate
+            for candidate in experimental_candidates
+            if candidate.fading_equalization_enabled
+        )
+    variation_confidence = max(
+        (
+            candidate.channel_variation_confidence
+            for candidate in experimental_candidates
+        ),
+        default=0.0,
+    )
+    for candidate in experimental_candidates:
+        try:
+            frame = decode_deep_likelihoods(
+                candidate.likelihoods,
+                config.codec,
+            )
+        except (FrameError, ValueError):
+            continue
+        return (
+            True,
+            True,
+            frame.payload == config.payload,
+            candidate.minimum_relative_gain,
+            candidate.erased_symbol_percent,
+            True,
             variation_confidence,
+            diversity_score,
         )
     return (
         True,
@@ -222,6 +282,7 @@ def _decode_candidates(
         baseline_candidates[0].erased_symbol_percent,
         False,
         variation_confidence,
+        diversity_score,
     )
 
 
@@ -232,7 +293,7 @@ def run_deep_validation(
     event_callback: EventCallback | None = None,
 ) -> DeepValidationResult:
     """Run one deterministic batch without opening audio or radio hardware."""
-    encoded = encode_deep_payload(config.payload, K10_DEEP_CODEC)
+    encoded = encode_deep_payload(config.payload, config.codec)
     clean_by_frequency = {
         offset: modulate_deep_audio(
             encoded.bits,
@@ -254,6 +315,7 @@ def run_deep_validation(
     erased_percents: list[float] = []
     fading_equalized_trials = 0
     variation_confidences: list[float] = []
+    diversity_scores: list[float] = []
     cancelled = False
 
     for trial in range(config.start_trial, stop_trial):
@@ -286,6 +348,7 @@ def run_deep_validation(
             erased_percent,
             fading_equalized,
             variation_confidence,
+            diversity_score,
         ) = _decode_candidates(impaired, len(encoded.bits), config)
         valid = crc_valid and payload_match
         completed += 1
@@ -297,6 +360,7 @@ def run_deep_validation(
             minimum_gains.append(minimum_gain)
             erased_percents.append(erased_percent)
             variation_confidences.append(variation_confidence)
+            diversity_scores.append(diversity_score)
         if event_callback is not None:
             event_callback(
                 "DEEP_VALIDATION_SIGNAL",
@@ -319,7 +383,7 @@ def run_deep_validation(
                 config,
                 np.random.default_rng(config.seed_base + 10_000_000 + noise_trial),
             )
-            _, crc_valid, _, _, _, _, _ = _decode_candidates(
+            _, crc_valid, _, _, _, _, _, _ = _decode_candidates(
                 noise, len(encoded.bits), config
             )
             completed_noise += 1
@@ -353,6 +417,7 @@ def run_deep_validation(
             if variation_confidences
             else 0.0
         ),
+        float(np.mean(diversity_scores)) if diversity_scores else 0.0,
     )
     if event_callback is not None:
         event_callback("DEEP_VALIDATION_END", asdict(result))
