@@ -169,3 +169,16 @@ and delivered 90/100 AWGN, but adds 112 pilot symbols or approximately
 - Observed 0/300 noise-only false decodes; this screen is useful but too small
   for a production false-decode claim.
 - Production mode parameters and protocol status remain unchanged.
+## Equalized multi-observation candidates
+
+- Corrected the time-diversity path to include CRC-arbitrated equalized
+  hypotheses when fading equalization is enabled.
+- Improved paired 12-seed delivery from 6 to 10 severe-composite frames and
+  from 6 to 8 strong-selective frames.
+- A promoted 40-seed campaign delivered 39 severe-composite and 26
+  strong-selective frames.
+- Corrected noise validation so it uses the configured observation count and
+  the same decoder as signal trials.
+- Measured approximately 20.4 seconds per two-observation noise trial with the
+  seven-point clock grid. The required 10,000-trial campaign remains pending
+  because the current implementation would require about 56.7 serial hours.

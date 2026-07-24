@@ -162,3 +162,11 @@ grid that brackets the injected value. Time-diversity candidates must:
 - exceed the current 75.0% severe-composite and 51.7% strong-selective baselines
   at -24 dB; and
 - complete a substantially larger noise-only campaign before acceptance.
+### Multi-observation validation integrity
+
+Signal and noise campaigns must exercise the same observation count, clock
+grid, acquisition fallback, candidate search, equalization options, and CRC
+arbitration. The corrected receiver currently delivers 39/40 severe-composite
+and 26/40 strong-selective frames at -24 dB. These small results justify further
+study but not a sensitivity or false-decode claim. Optimize or batch the
+receiver before completing at least 10,000 matched-path noise trials.

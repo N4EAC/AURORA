@@ -2,6 +2,7 @@
 
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from dsp.deep_codec import DeepCodecConfig, K10_RATE_QUARTER_GENERATORS
 from modem.deep_validation import DeepValidationConfig, run_deep_validation
@@ -9,6 +10,31 @@ from modem.mode_definition import AURORA_ROBUST_MODE
 
 
 class DeepValidationTests(unittest.TestCase):
+    def test_noise_uses_configured_soft_observation_count(self) -> None:
+        decoded = (False, False, False, 0.0, 0.0, False, 0.0, 0.0)
+        with (
+            patch(
+                "modem.deep_validation._noise_audio",
+                wraps=__import__(
+                    "modem.deep_validation", fromlist=["_noise_audio"]
+                )._noise_audio,
+            ) as noise_audio,
+            patch(
+                "modem.deep_validation._decode_soft_observations",
+                return_value=decoded,
+            ) as decode_observations,
+        ):
+            result = run_deep_validation(
+                DeepValidationConfig(
+                    signal_trials=0,
+                    noise_trials=1,
+                    soft_observation_count=2,
+                )
+            )
+        self.assertEqual(result.noise_trials, 1)
+        self.assertEqual(noise_audio.call_count, 2)
+        self.assertEqual(len(decode_observations.call_args.args[0]), 2)
+
     def test_small_clean_batch_decodes_and_reports_resources(self) -> None:
         result = run_deep_validation(
             DeepValidationConfig(

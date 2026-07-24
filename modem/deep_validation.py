@@ -314,7 +314,6 @@ def _decode_soft_observations(
             "clock_search_ppm": config.clock_search_ppm,
             "frequency_search_hz": config.frequency_search_hz,
             "erasure_gain_ratio": config.erasure_gain_ratio,
-            "fading_equalization": False,
             "fading_activation_gain_ratio": config.fading_activation_gain_ratio,
             "fading_confidence_threshold": config.fading_confidence_threshold,
             "pilot_interval": config.pilot_interval,
@@ -324,6 +323,7 @@ def _decode_soft_observations(
         recovered = recover_deep_candidate_likelihoods(
             audio,
             coded_bit_count,
+            fading_equalization=False,
             acquisition_diversity=False,
             **common_options,
         )
@@ -336,6 +336,7 @@ def _decode_soft_observations(
             recovered = recover_deep_candidate_likelihoods(
                 audio,
                 coded_bit_count,
+                fading_equalization=False,
                 acquisition_diversity=True,
                 **common_options,
             )
@@ -347,6 +348,36 @@ def _decode_soft_observations(
                     >= config.acquisition_diversity_coherent_threshold
                     and candidate.acquisition_diversity_score
                     >= config.acquisition_diversity_score_threshold
+                )
+            )
+            used_diversity = True
+        else:
+            used_diversity = False
+        if accepted and config.fading_equalization:
+            equalized = recover_deep_candidate_likelihoods(
+                audio,
+                coded_bit_count,
+                fading_equalization=True,
+                acquisition_diversity=used_diversity,
+                **common_options,
+            )
+            accepted += tuple(
+                candidate
+                for candidate in equalized
+                if candidate.fading_equalization_enabled
+                and (
+                    (
+                        not used_diversity
+                        and candidate.acquisition_score
+                        >= config.acquisition_score_threshold
+                    )
+                    or (
+                        used_diversity
+                        and candidate.acquisition_score
+                        >= config.acquisition_diversity_coherent_threshold
+                        and candidate.acquisition_diversity_score
+                        >= config.acquisition_diversity_score_threshold
+                    )
                 )
             )
         if accepted:
@@ -490,13 +521,21 @@ def run_deep_validation(
             if not should_continue():
                 cancelled = True
                 break
-            noise = _noise_audio(
-                reference,
-                config,
-                np.random.default_rng(config.seed_base + 10_000_000 + noise_trial),
+            noise_observations = tuple(
+                _noise_audio(
+                    reference,
+                    config,
+                    np.random.default_rng(
+                        config.seed_base
+                        + 10_000_000
+                        + noise_trial
+                        + observation * max(config.noise_trials, 1)
+                    ),
+                )
+                for observation in range(config.soft_observation_count)
             )
-            _, crc_valid, _, _, _, _, _, _ = _decode_candidates(
-                noise, len(encoded.bits), config
+            _, crc_valid, _, _, _, _, _, _ = _decode_soft_observations(
+                noise_observations, len(encoded.bits), config
             )
             completed_noise += 1
             false_decodes += int(crc_valid)

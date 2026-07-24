@@ -389,3 +389,24 @@ The earlier raw likelihood-summation strategy remains rejected. Normalized,
 candidate-aware combining is promising but provisional. Strong selective fading
 and a larger noise-only campaign remain acceptance blockers. These results do
 not define an over-the-air protocol.
+### Equalized candidates in normalized time diversity
+
+The multi-observation validation path previously combined baseline candidates
+even when fading equalization was requested. It now retains CRC-arbitrated
+equalized hypotheses alongside baseline hypotheses. Baseline candidates remain
+available, and an equalized result is accepted only when the final frame CRC
+and payload check succeed.
+
+On identical 12-seed screens at -24 dB, severe-composite delivery improved from
+6/12 to 10/12 and strong-selective delivery improved from 6/12 to 8/12. A
+promoted independent 40-seed campaign delivered 39/40 severe-composite frames
+and 26/40 strong-selective frames. Equalized hypotheses accounted for 12 and 5
+of those successful deliveries respectively.
+
+Noise-only validation was also corrected to generate the configured number of
+independent observations and route them through the same multi-observation
+decoder. A 10-trial runtime sample produced zero false decodes but required
+approximately 204 seconds. At that measured rate, 10,000 trials would require
+about 56.7 serial hours. The large false-decode campaign remains required and
+must be batched or optimized; the small runtime sample is not statistical
+evidence of safety.

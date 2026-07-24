@@ -259,6 +259,12 @@ latest -24 dB campaign delivered 45/60 severe-composite frames and 31/60
 strong-selective frames. These results remain provisional and do not establish
 the locked -24 dB acceptance target.
 
+The next receiver correction retained CRC-arbitrated equalized candidates in
+the multi-observation search. An independent 40-seed campaign delivered 39/40
+severe-composite and 26/40 strong-selective frames. Matched-path noise
+validation is computationally expensive and the required 10,000-trial campaign
+remains pending; no false-decode or on-air sensitivity claim is made.
+
 ## Versioning
 
 Aurora uses semantic versioning. The first development release will begin in
