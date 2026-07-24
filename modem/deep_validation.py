@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
+from itertools import product
 import math
 import time
 import tracemalloc
@@ -31,6 +32,7 @@ from modem.deep_mode_study import (
     DeepChannelProfile,
     REFERENCE_PAYLOAD,
 )
+from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
 
 
 EventCallback = Callable[[str, dict[str, object]], None]
@@ -67,10 +69,14 @@ class DeepValidationConfig:
     fading_equalization: bool = False
     erasure_gain_ratio: float = 0.0
     fading_activation_gain_ratio: float = 0.6
-    fading_confidence_threshold: float = 1.0
+    fading_confidence_threshold: float = 0.5
     acquisition_diversity: bool = False
     acquisition_diversity_score_threshold: float = 0.37
     acquisition_diversity_coherent_threshold: float = 1.0
+    pilot_interval: int = 128
+    pilot_symbol_count: int = 16
+    mode: ModeDefinition = AURORA_ROBUST_MODE
+    soft_observation_count: int = 1
 
     def __post_init__(self) -> None:
         if min(self.signal_trials, self.noise_trials, self.start_trial) < 0:
@@ -106,6 +112,10 @@ class DeepValidationConfig:
             raise ValueError(
                 "Acquisition diversity coherent threshold must be positive"
             )
+        if self.pilot_interval <= 0 or self.pilot_symbol_count <= 0:
+            raise ValueError("Pilot geometry values must be positive")
+        if self.soft_observation_count <= 0:
+            raise ValueError("Soft observation count must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +185,9 @@ def _decode_candidates(
         "erasure_gain_ratio": config.erasure_gain_ratio,
         "fading_activation_gain_ratio": config.fading_activation_gain_ratio,
         "fading_confidence_threshold": config.fading_confidence_threshold,
+        "pilot_interval": config.pilot_interval,
+        "pilot_symbol_count": config.pilot_symbol_count,
+        "mode": config.mode,
     }
     primary_candidates = recover_deep_candidate_likelihoods(
         audio,
@@ -286,6 +299,96 @@ def _decode_candidates(
     )
 
 
+def _decode_soft_observations(
+    audio_observations: tuple[AudioBuffer, ...],
+    coded_bit_count: int,
+    config: DeepValidationConfig,
+) -> tuple[bool, bool, bool, float, float, bool, float, float]:
+    """Combine independently received, acquired observations before FEC."""
+    if len(audio_observations) == 1:
+        return _decode_candidates(audio_observations[0], coded_bit_count, config)
+
+    observation_candidates: list[tuple[DeepWaveformResult, ...]] = []
+    for audio in audio_observations:
+        common_options = {
+            "clock_search_ppm": config.clock_search_ppm,
+            "frequency_search_hz": config.frequency_search_hz,
+            "erasure_gain_ratio": config.erasure_gain_ratio,
+            "fading_equalization": False,
+            "fading_activation_gain_ratio": config.fading_activation_gain_ratio,
+            "fading_confidence_threshold": config.fading_confidence_threshold,
+            "pilot_interval": config.pilot_interval,
+            "pilot_symbol_count": config.pilot_symbol_count,
+            "mode": config.mode,
+        }
+        recovered = recover_deep_candidate_likelihoods(
+            audio,
+            coded_bit_count,
+            acquisition_diversity=False,
+            **common_options,
+        )
+        accepted = tuple(
+            candidate
+            for candidate in recovered
+            if candidate.acquisition_score >= config.acquisition_score_threshold
+        )
+        if not accepted and config.acquisition_diversity:
+            recovered = recover_deep_candidate_likelihoods(
+                audio,
+                coded_bit_count,
+                acquisition_diversity=True,
+                **common_options,
+            )
+            accepted = tuple(
+                candidate
+                for candidate in recovered
+                if (
+                    candidate.acquisition_score
+                    >= config.acquisition_diversity_coherent_threshold
+                    and candidate.acquisition_diversity_score
+                    >= config.acquisition_diversity_score_threshold
+                )
+            )
+        if accepted:
+            observation_candidates.append(accepted)
+    if not observation_candidates:
+        return False, False, False, 0.0, 0.0, False, 0.0, 0.0
+
+    selected: tuple[DeepWaveformResult, ...] = tuple(
+        candidates[0] for candidates in observation_candidates
+    )
+    valid = False
+    for hypothesis in product(*observation_candidates):
+        normalized: list[np.ndarray] = []
+        for candidate in hypothesis:
+            likelihoods = np.asarray(candidate.likelihoods, dtype=np.float64)
+            scale = max(
+                float(np.sqrt(np.mean(likelihoods * likelihoods))),
+                np.finfo(float).tiny,
+            )
+            reliability = max(candidate.acquisition_diversity_score, 0.1)
+            normalized.append(likelihoods * reliability / scale)
+        combined = np.sum(np.asarray(normalized), axis=0)
+        try:
+            frame = decode_deep_likelihoods(combined, config.codec)
+        except (FrameError, ValueError):
+            continue
+        valid = frame.payload == config.payload
+        if valid:
+            selected = hypothesis
+            break
+    return (
+        True,
+        valid,
+        valid,
+        min(candidate.minimum_relative_gain for candidate in selected),
+        float(np.mean([candidate.erased_symbol_percent for candidate in selected])),
+        any(candidate.fading_equalization_enabled for candidate in selected),
+        float(np.mean([candidate.channel_variation_confidence for candidate in selected])),
+        float(np.mean([candidate.acquisition_diversity_score for candidate in selected])),
+    )
+
+
 def run_deep_validation(
     config: DeepValidationConfig = DeepValidationConfig(),
     *,
@@ -299,6 +402,9 @@ def run_deep_validation(
             encoded.bits,
             leading_silence_samples=config.leading_silence_samples,
             frequency_offset_hz=offset,
+            pilot_interval=config.pilot_interval,
+            pilot_symbol_count=config.pilot_symbol_count,
+            mode=config.mode,
         )
         for offset in config.frequency_offsets_hz
     }
@@ -322,7 +428,6 @@ def run_deep_validation(
         if not should_continue():
             cancelled = True
             break
-        random = np.random.default_rng(config.seed_base + trial)
         frequency = config.frequency_offsets_hz[
             trial % len(config.frequency_offsets_hz)
         ]
@@ -335,10 +440,17 @@ def run_deep_validation(
             reference_bandwidth_hz=config.reference_bandwidth_hz,
             clock_error_ppm=config.profile.channel.clock_error_ppm + clock,
         )
-        impaired = apply_audio_channel(
-            clean_by_frequency[frequency],
-            channel,
-            random,
+        impaired = tuple(
+            apply_audio_channel(
+                clean_by_frequency[frequency],
+                channel,
+                np.random.default_rng(
+                    config.seed_base
+                    + trial
+                    + observation * max(config.signal_trials, 1)
+                ),
+            )
+            for observation in range(config.soft_observation_count)
         )
         (
             acquired,
@@ -349,7 +461,7 @@ def run_deep_validation(
             fading_equalized,
             variation_confidence,
             diversity_score,
-        ) = _decode_candidates(impaired, len(encoded.bits), config)
+        ) = _decode_soft_observations(impaired, len(encoded.bits), config)
         valid = crc_valid and payload_match
         completed += 1
         decoded += int(valid)

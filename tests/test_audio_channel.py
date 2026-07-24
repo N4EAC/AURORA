@@ -26,6 +26,26 @@ class AudioChannelTests(unittest.TestCase):
         second = apply_audio_channel(self.audio, config, np.random.default_rng(42))
         self.assertTrue(np.array_equal(first.samples, second.samples))
 
+    def test_time_varying_multipath_is_seeded_and_changes_audio(self) -> None:
+        config = AudioChannelConfig(
+            multipath_delay_ms=3.0,
+            multipath_gain=0.6,
+            multipath_fading_depth=0.8,
+            multipath_fading_cycles_per_frame=2.0,
+        )
+        first = apply_audio_channel(
+            self.audio,
+            config,
+            np.random.default_rng(17),
+        )
+        second = apply_audio_channel(
+            self.audio,
+            config,
+            np.random.default_rng(17),
+        )
+        self.assertTrue(np.array_equal(first.samples, second.samples))
+        self.assertFalse(np.array_equal(first.samples, self.audio.samples))
+
     def test_reference_bandwidth_noise_calibration(self) -> None:
         variance = reference_noise_variance(1.0, 0.0, 12_000, 2_500.0)
         self.assertAlmostEqual(variance, 2.4)

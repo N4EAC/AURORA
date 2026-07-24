@@ -15,7 +15,7 @@ from dsp.waveform import (
     root_raised_cosine_taps,
     samples_per_symbol,
 )
-from modem.mode_definition import AURORA_ROBUST_MODE
+from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
 
 
 DEEP_SAMPLE_RATE = AURORA_ROBUST_MODE.audio_sample_rate
@@ -56,9 +56,13 @@ def bits_to_bpsk(bits: tuple[int, ...] | list[int]) -> np.ndarray:
     return symbols
 
 
-def deep_pilot_symbols() -> np.ndarray:
+def deep_pilot_symbols(
+    symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+) -> np.ndarray:
     """Return the fixed research pilot group."""
-    pilots = acquisition_symbols()[:DEEP_PILOT_SYMBOL_COUNT].astype(np.complex128)
+    if not 0 < symbol_count <= PREAMBLE_SYMBOL_COUNT:
+        raise ValueError("Pilot symbol count must fit within the preamble")
+    pilots = acquisition_symbols()[:symbol_count].astype(np.complex128)
     pilots.setflags(write=False)
     return pilots
 
@@ -66,6 +70,7 @@ def deep_pilot_symbols() -> np.ndarray:
 def multiplex_deep_pilots(
     data_symbols: np.ndarray,
     interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
 ) -> np.ndarray:
     """Insert a pilot group between fixed-size data blocks."""
     data = np.asarray(data_symbols, dtype=np.complex128)
@@ -77,18 +82,25 @@ def multiplex_deep_pilots(
     for start in range(0, len(data), interval):
         parts.append(data[start : start + interval])
         if start + interval < len(data):
-            parts.append(deep_pilot_symbols())
+            parts.append(deep_pilot_symbols(pilot_symbol_count))
     result = np.concatenate(parts)
     result.setflags(write=False)
     return result
 
 
-def deep_pilot_overhead(payload_symbol_count: int) -> int:
+def deep_pilot_overhead(
+    payload_symbol_count: int,
+    interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+) -> int:
     """Return inserted pilot symbols for a known payload length."""
     if payload_symbol_count <= 0:
         raise ValueError("Payload symbol count must be positive")
-    groups = (payload_symbol_count - 1) // DEEP_PILOT_INTERVAL
-    return groups * DEEP_PILOT_SYMBOL_COUNT
+    if interval <= 0:
+        raise ValueError("Pilot interval must be positive")
+    deep_pilot_symbols(pilot_symbol_count)
+    groups = (payload_symbol_count - 1) // interval
+    return groups * pilot_symbol_count
 
 
 def modulate_deep_audio(
@@ -97,14 +109,21 @@ def modulate_deep_audio(
     leading_silence_samples: int = 0,
     frequency_offset_hz: float = 0.0,
     pilots_enabled: bool = True,
+    pilot_interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
 ) -> AudioBuffer:
     """Generate the provisional Deep research waveform without opening hardware."""
     symbols = bits_to_bpsk(bits)
     if pilots_enabled:
-        symbols = multiplex_deep_pilots(symbols)
+        symbols = multiplex_deep_pilots(
+            symbols,
+            pilot_interval,
+            pilot_symbol_count,
+        )
     return modulate_audio(
         symbols,
-        AURORA_ROBUST_MODE,
+        mode,
         leading_silence_samples=leading_silence_samples,
         frequency_offset_hz=frequency_offset_hz,
     )
@@ -154,13 +173,16 @@ def _separate_pilots(
     symbols: np.ndarray,
     payload_symbol_count: int,
     tracking_enabled: bool,
+    pilot_interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+    symbol_rate: float = DEEP_SYMBOL_RATE,
 ) -> tuple[np.ndarray, float, float]:
-    pilot = deep_pilot_symbols()
+    pilot = deep_pilot_symbols(pilot_symbol_count)
     pilot_starts: list[int] = []
     cursor = 0
     remaining = payload_symbol_count
     while remaining:
-        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        block_size = min(pilot_interval, remaining)
         cursor += block_size
         remaining -= block_size
         if remaining:
@@ -175,7 +197,7 @@ def _separate_pilots(
             observed = symbols[start : start + len(pilot)] * np.conj(pilot)
             differential += np.vdot(observed[:-1], observed[1:])
         phase_step = float(np.angle(differential))
-        coarse_residual_hz = phase_step * DEEP_SYMBOL_RATE / (2.0 * np.pi)
+        coarse_residual_hz = phase_step * symbol_rate / (2.0 * np.pi)
         positions = np.arange(len(symbols), dtype=np.float64)
         working = symbols * np.exp(-1j * phase_step * positions)
     data_parts: list[np.ndarray] = []
@@ -185,7 +207,7 @@ def _separate_pilots(
     cursor = 0
     remaining = payload_symbol_count
     while remaining:
-        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        block_size = min(pilot_interval, remaining)
         data_parts.append(working[cursor : cursor + block_size])
         cursor += block_size
         remaining -= block_size
@@ -207,7 +229,7 @@ def _separate_pilots(
     residual_hz = 0.0
     if len(phases) > 1:
         slope = float(np.polyfit(pilot_centers, phases, 1)[0])
-        residual_hz = slope * DEEP_SYMBOL_RATE / (2.0 * np.pi)
+        residual_hz = slope * symbol_rate / (2.0 * np.pi)
     if tracking_enabled:
         all_positions = np.arange(len(working), dtype=np.float64)
         correction_phase = np.interp(
@@ -222,7 +244,7 @@ def _separate_pilots(
         cursor = 0
         remaining = payload_symbol_count
         while remaining:
-            block_size = min(DEEP_PILOT_INTERVAL, remaining)
+            block_size = min(pilot_interval, remaining)
             data_parts.append(corrected[cursor : cursor + block_size])
             cursor += block_size
             remaining -= block_size
@@ -246,6 +268,9 @@ def recover_deep_likelihoods(
     noise_variance: float = 1.0,
     pilots_enabled: bool = True,
     tracking_enabled: bool = True,
+    pilot_interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
 ) -> DeepWaveformResult:
     """Search clock hypotheses and return soft BPSK decisions."""
     if not clock_search_ppm:
@@ -268,11 +293,15 @@ def recover_deep_likelihoods(
             try:
                 waveform_symbol_count = payload_bit_count
                 if pilots_enabled:
-                    waveform_symbol_count += deep_pilot_overhead(payload_bit_count)
+                    waveform_symbol_count += deep_pilot_overhead(
+                        payload_bit_count,
+                        pilot_interval,
+                        pilot_symbol_count,
+                    )
                 recovered = demodulate_audio(
                     corrected,
                     waveform_symbol_count,
-                    AURORA_ROBUST_MODE,
+                    mode,
                     sync_threshold=0.0,
                 )
             except ValueError as error:
@@ -296,6 +325,9 @@ def recover_deep_likelihoods(
                     payload_symbols,
                     payload_bit_count,
                     tracking_enabled,
+                    pilot_interval,
+                    pilot_symbol_count,
+                    mode.symbol_rate,
                 )
             likelihoods = soft_demapping(
                 payload_symbols,
@@ -325,16 +357,18 @@ def recover_deep_likelihoods(
 
 def _known_symbol_geometry(
     payload_symbol_count: int,
+    pilot_interval: int,
+    pilot_symbol_count: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return preamble/pilot positions and their known symbols."""
     preamble = acquisition_symbols().astype(np.complex128)
-    pilot = deep_pilot_symbols()
+    pilot = deep_pilot_symbols(pilot_symbol_count)
     positions: list[np.ndarray] = [np.arange(len(preamble))]
     references: list[np.ndarray] = [preamble]
     cursor = 0
     remaining = payload_symbol_count
     while remaining:
-        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        block_size = min(pilot_interval, remaining)
         cursor += block_size
         remaining -= block_size
         if remaining:
@@ -348,15 +382,17 @@ def _known_symbol_geometry(
 
 def _known_symbol_groups(
     payload_symbol_count: int,
+    pilot_interval: int,
+    pilot_symbol_count: int,
 ) -> tuple[tuple[int, np.ndarray], ...]:
     """Return the preamble and time-separated pilots as acquisition groups."""
     preamble = acquisition_symbols().astype(np.complex128)
-    pilot = deep_pilot_symbols()
+    pilot = deep_pilot_symbols(pilot_symbol_count)
     groups: list[tuple[int, np.ndarray]] = [(0, preamble)]
     cursor = len(preamble)
     remaining = payload_symbol_count
     while remaining:
-        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        block_size = min(pilot_interval, remaining)
         cursor += block_size
         remaining -= block_size
         if remaining:
@@ -413,17 +449,19 @@ def _fading_weighted_symbols(
     erasure_gain_ratio: float,
     activation_gain_ratio: float,
     confidence_threshold: float,
+    pilot_interval: int,
+    pilot_symbol_count: int,
 ) -> tuple[np.ndarray, float, float, float, bool, float]:
     """Estimate pilot gain and reliability-weight symbols during proven fades."""
     preamble = acquisition_symbols().astype(np.complex128)
-    pilot = deep_pilot_symbols()
+    pilot = deep_pilot_symbols(pilot_symbol_count)
     centers = [float((len(preamble) - 1) / 2.0)]
     preamble_observations = symbols[: len(preamble)] * np.conj(preamble)
     observation_groups = [preamble_observations]
     cursor = len(preamble)
     remaining = payload_symbol_count
     while remaining:
-        block_size = min(DEEP_PILOT_INTERVAL, remaining)
+        block_size = min(pilot_interval, remaining)
         cursor += block_size
         remaining -= block_size
         if remaining:
@@ -501,20 +539,23 @@ def _fading_weighted_symbols(
     )
 
 
-def _matched_baseband(audio: AudioBuffer) -> np.ndarray:
+def _matched_baseband(
+    audio: AudioBuffer,
+    mode: ModeDefinition,
+) -> np.ndarray:
     samples = np.asarray(audio.samples, dtype=np.float64)
     indices = np.arange(len(samples), dtype=np.float64)
     baseband = 2.0 * samples * np.exp(
         -2j
         * np.pi
-        * AURORA_ROBUST_MODE.audio_carrier_hz
+        * mode.audio_carrier_hz
         * indices
         / audio.sample_rate
     )
     taps = root_raised_cosine_taps(
-        samples_per_symbol(AURORA_ROBUST_MODE),
-        AURORA_ROBUST_MODE.pulse_rolloff,
-        AURORA_ROBUST_MODE.pulse_span_symbols,
+        samples_per_symbol(mode),
+        mode.pulse_rolloff,
+        mode.pulse_span_symbols,
     )
     return np.convolve(baseband, taps, mode="full")
 
@@ -536,6 +577,9 @@ def recover_deep_candidate_likelihoods(
     fading_activation_gain_ratio: float = 0.6,
     fading_confidence_threshold: float = 1.0,
     acquisition_diversity: bool = False,
+    pilot_interval: int = DEEP_PILOT_INTERVAL,
+    pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
 ) -> tuple[DeepWaveformResult, ...]:
     """Return a bounded list ranked by coherent preamble-plus-pilot energy."""
     if min(acquisition_peaks, timing_step_samples, decode_candidates) <= 0:
@@ -546,21 +590,38 @@ def recover_deep_candidate_likelihoods(
         raise ValueError("Fading activation gain ratio must be between zero and one")
     if fading_confidence_threshold <= 0.0:
         raise ValueError("Fading confidence threshold must be positive")
-    ratio = samples_per_symbol(AURORA_ROBUST_MODE)
+    deep_pilot_overhead(
+        payload_bit_count,
+        pilot_interval,
+        pilot_symbol_count,
+    )
+    ratio = samples_per_symbol(mode)
     waveform_count = (
         PREAMBLE_SYMBOL_COUNT
         + payload_bit_count
-        + deep_pilot_overhead(payload_bit_count)
+        + deep_pilot_overhead(
+            payload_bit_count,
+            pilot_interval,
+            pilot_symbol_count,
+        )
     )
-    known_positions, known_reference = _known_symbol_geometry(payload_bit_count)
-    known_groups = _known_symbol_groups(payload_bit_count)
+    known_positions, known_reference = _known_symbol_geometry(
+        payload_bit_count,
+        pilot_interval,
+        pilot_symbol_count,
+    )
+    known_groups = _known_symbol_groups(
+        payload_bit_count,
+        pilot_interval,
+        pilot_symbol_count,
+    )
     candidates: list[tuple[float, DeepWaveformResult]] = []
 
     for clock_ppm in clock_search_ppm:
         clock_corrected = _correct_clock(audio, clock_ppm)
         for coarse_hz in frequency_search_hz:
             corrected = _correct_frequency(clock_corrected, coarse_hz)
-            matched = _matched_baseband(corrected)
+            matched = _matched_baseband(corrected, mode)
             raw_peaks: list[tuple[float, int]] = []
             preamble = acquisition_symbols().astype(np.complex128)
             for phase in range(ratio):
@@ -621,7 +682,7 @@ def recover_deep_candidate_likelihoods(
                                 * np.pi
                                 * residual_hz
                                 * known_positions
-                                / DEEP_SYMBOL_RATE
+                                / mode.symbol_rate
                             )
                         )
                         for residual_hz in residual_frequency_hz
@@ -638,7 +699,7 @@ def recover_deep_candidate_likelihoods(
                             * np.pi
                             * fine_hz
                             * positions
-                            / DEEP_SYMBOL_RATE
+                            / mode.symbol_rate
                             + phase
                         )
                     )
@@ -664,11 +725,16 @@ def recover_deep_candidate_likelihoods(
                             erasure_gain_ratio=erasure_gain_ratio,
                             activation_gain_ratio=fading_activation_gain_ratio,
                             confidence_threshold=fading_confidence_threshold,
+                            pilot_interval=pilot_interval,
+                            pilot_symbol_count=pilot_symbol_count,
                         )
                     payload, pilot_quality, _ = _separate_pilots(
                         carrier_corrected[PREAMBLE_SYMBOL_COUNT:],
                         payload_bit_count,
                         False,
+                        pilot_interval,
+                        pilot_symbol_count,
+                        mode.symbol_rate,
                     )
                     likelihoods = soft_demapping(payload, modulation="bpsk")
                     coherent_score = float(
@@ -695,6 +761,11 @@ def recover_deep_candidate_likelihoods(
                         variation_confidence,
                         diversity_score,
                     )
-                    candidates.append((coherent_score, result))
+                    ranking_score = (
+                        diversity_score
+                        if acquisition_diversity
+                        else coherent_score
+                    )
+                    candidates.append((ranking_score, result))
     candidates.sort(key=lambda item: item[0], reverse=True)
     return tuple(result for _, result in candidates[:decode_candidates])

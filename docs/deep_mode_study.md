@@ -252,6 +252,74 @@ therefore a provisional research candidate, not a new mode definition. A
 larger paired AWGN campaign is required before changing the documented robust
 mode geometry.
 
+### Large paired geometry campaigns
+
+The paired AWGN campaign was extended to 1,000 identical seeds:
+
+- 16 columns: 888/1,000, with a 95% Wilson interval of 86.69% to 90.61%;
+- 32 columns: 897/1,000, with a 95% Wilson interval of 87.66% to 91.43%;
+- acquisition failures: zero for both.
+
+Neither geometry establishes the 90% AWGN target. The corresponding 500-seed
+severe composite campaign delivered 201/500 at 16 columns and 177/500 at
+32 columns. Both had seven acquisition failures. The 16-column severe result
+has a 95% Wilson interval of 35.99% to 44.56%, compared with 31.33% to 39.69%
+for 32 columns.
+
+Lowering the equalizer variation-confidence threshold from 1.0 to 0.5, while
+retaining CRC-only fallback acceptance, improved the 16-column severe result
+from 201/500 to 221/500. Equalization-assisted recoveries increased from 67 to
+87 without changing acquisition. The 0.5 threshold is now the validation
+default when the otherwise disabled research equalizer is explicitly enabled.
+
+The 16-column acquisition-fallback candidate produced zero false decodes in
+1,000 noise-only trials, for an approximately 0.383% Wilson upper bound.
+
+### Selective-fading channel extension
+
+The offline channel can now apply independently time-varying gain to a delayed
+path. This creates deterministic frequency-selective cancellation instead of
+applying one common envelope to the entire waveform.
+
+At -24 dB, the 16-column receiver delivered 71/100 on a moderate selective
+profile. An 8-column candidate delivered 74/100 on the same seeds, but scored
+44/100 versus 48/100 for 16 columns on the established severe composite set.
+On a strong selective stress profile, 8 columns delivered 14/100 versus 6/100
+for 16 columns. The stress result remains poor in absolute terms and shows that
+the scalar pilot equalizer cannot reliably invert deep frequency-selective
+nulls.
+
+These results support keeping interleaver geometry provisional. If Aurora
+eventually supports multiple geometries, the selection must be fixed by mode or
+explicitly signaled; it must not be guessed from a failed decode.
+
+### Pilot geometry study
+
+Pilot interval and group length are now explicit research parameters. The
+original 128-data/16-pilot geometry inserts 112 pilot symbols into the
+996-symbol coded payload. Candidate screens included:
+
+- 64/8: 120 pilot symbols;
+- 256/32: 96 pilot symbols;
+- 64/16: 240 pilot symbols;
+- 128/32: 224 pilot symbols.
+
+The nearly equal-overhead 64/8 candidate looked favorable in six trials but
+reversed in a 25-seed comparison, delivering 8/25 versus 10/25 on severe
+composite fading and 19/25 versus 21/25 on moderate selective fading. It was
+rejected.
+
+Doubling group length at the original cadence was more consistent. In 100
+severe trials, 128/32 pilots delivered 56 frames versus 35 for 128/16, removed
+the one acquisition failure, and increased equalization-assisted recoveries
+from 14 to 25. On the established 100-seed AWGN set it delivered 90 frames,
+versus 88 for the 16-column, 128/16 comparator.
+
+The gain costs 112 additional pilot symbols, approximately 3.6 seconds at
+31.25 symbols/s. It is not an equal-airtime improvement and remains
+provisional until compared with using that time for additional coding,
+repetition, or other diversity.
+
 Normal execution took approximately 1.4 to 1.8 seconds per frame per worker.
 An instrumented frame took 5.15 seconds and reached 28,182,286 bytes of traced
 peak memory. A receive-only VB-Cable loopback at 12 kHz decoded successfully.
@@ -277,3 +345,47 @@ for point in result.points:
 
 Use smaller seed, candidate, SNR, frequency, and clock selections for focused
 engineering checks. The full default matrix is computationally expensive.
+### Equal-airtime soft-observation screen
+
+An offline screen compared one 15.625-symbol/s frame with two independently
+impaired 31.25-symbol/s observations of the same frame. Both alternatives use
+approximately 82.6 seconds of transmitted waveform. The 31.25-symbol/s
+observations were aligned independently and their soft likelihoods were summed
+before the K=10 rate-1/4 decoder.
+
+The two-observation path decoded 20/20 AWGN trials at -24 dB, but decoded 0/20
+trials in the severe composite profile. Reducing the coherent acquisition
+threshold from 5.0 to 1.0 converted acquisition rejections into CRC failures
+without recovering payloads. Direct likelihood summation is therefore rejected
+as a mode candidate: independently tracked HF observations need phase,
+reliability, and gain normalization before they can be combined safely.
+
+The result also confirms that acquisition and channel tracking, rather than
+additional unqualified energy alone, are the next research priority. This is an
+offline feasibility result and does not define an over-the-air protocol.
+### Calibrated acquisition and normalized time diversity
+
+Impairment attribution found that a +75 ppm channel clock error produced 0/20
+deliveries when the validation receiver was configured to search only 0 ppm.
+Fading alone delivered 15/20, multipath alone 20/20, and impulsive interference
+16/20. A bounded clock grid of -100, -75, -20, 0, 20, 75, and 100 ppm is
+therefore required for the composite research profiles; this is receiver
+calibration rather than additional coding gain.
+
+The diversity receiver now retains up to three bounded timing candidates per
+observation. When coherent acquisition fails, it uses normalized noncoherent
+preamble-plus-pilot agreement. Before FEC, each candidate likelihood stream is
+RMS-normalized and weighted by its bounded known-symbol agreement. The decoder
+tests the small Cartesian set of timing hypotheses and accepts only a
+CRC-confirmed payload.
+
+At -24 dB, 32 pilot symbols per 128 data symbols, and the bounded clock grid:
+
+- severe composite HF: 45/60 deliveries (75.0%), zero acquisition failures;
+- strong selective fading: 31/60 deliveries (51.7%), one acquisition failure;
+- noise only: 0/300 false decodes, with a 95% upper confidence bound of 1.264%.
+
+The earlier raw likelihood-summation strategy remains rejected. Normalized,
+candidate-aware combining is promising but provisional. Strong selective fading
+and a larger noise-only campaign remain acceptance blockers. These results do
+not define an over-the-air protocol.

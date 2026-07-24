@@ -19,6 +19,8 @@ class AudioChannelConfig:
     clock_error_ppm: float = 0.0
     multipath_delay_ms: float = 0.0
     multipath_gain: float = 0.0
+    multipath_fading_depth: float = 0.0
+    multipath_fading_cycles_per_frame: float = 0.0
     fading_depth: float = 0.0
     fading_cycles_per_frame: float = 0.0
     impulse_probability: float = 0.0
@@ -35,6 +37,12 @@ class AudioChannelConfig:
             raise ValueError("Multipath delay and gain must not be negative")
         if self.multipath_gain > 0.0 and self.multipath_delay_ms <= 0.0:
             raise ValueError("Active multipath requires a positive delay")
+        if not 0.0 <= self.multipath_fading_depth < 1.0:
+            raise ValueError("Multipath fading depth must be between zero and one")
+        if self.multipath_fading_cycles_per_frame < 0.0:
+            raise ValueError("Multipath fading cycles must not be negative")
+        if self.multipath_fading_depth > 0.0 and self.multipath_gain == 0.0:
+            raise ValueError("Multipath fading requires an active path")
         if not 0.0 <= self.fading_depth < 1.0:
             raise ValueError("Fading depth must be between zero and one")
         if self.fading_cycles_per_frame < 0.0:
@@ -61,7 +69,13 @@ def _apply_clock_error(samples: np.ndarray, ppm: float) -> np.ndarray:
 
 
 def _add_multipath(
-    samples: np.ndarray, sample_rate: int, delay_ms: float, gain: float
+    samples: np.ndarray,
+    sample_rate: int,
+    delay_ms: float,
+    gain: float,
+    fading_depth: float,
+    fading_cycles: float,
+    random: np.random.Generator,
 ) -> np.ndarray:
     if gain == 0.0:
         return samples.copy()
@@ -69,6 +83,18 @@ def _add_multipath(
     echo = np.zeros_like(samples)
     if delay_samples < len(samples):
         echo[delay_samples:] = samples[:-delay_samples]
+    if fading_depth > 0.0:
+        phase = random.uniform(0.0, 2.0 * math.pi)
+        positions = np.arange(len(samples), dtype=np.float64)
+        envelope = 1.0 + fading_depth * np.sin(
+            phase
+            + 2.0
+            * math.pi
+            * fading_cycles
+            * positions
+            / max(1, len(samples))
+        )
+        echo *= envelope
     return (samples + gain * echo) / math.sqrt(1.0 + gain * gain)
 
 
@@ -137,6 +163,9 @@ def apply_audio_channel(
         audio.sample_rate,
         config.multipath_delay_ms,
         config.multipath_gain,
+        config.multipath_fading_depth,
+        config.multipath_fading_cycles_per_frame,
+        random,
     )
     working = _apply_fading(
         working,

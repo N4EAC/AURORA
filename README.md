@@ -252,8 +252,12 @@ Long campaigns use `modem.deep_validation.DeepValidationConfig` and
 `run_deep_validation`. The runner supports deterministic batch ranges,
 cancellation, confidence intervals, runtime measurements, optional traced peak
 memory, carrier and clock grids, named HF profiles, and an optional
-CRC-validated fading fallback. The current K10 evidence does not establish the
-locked -24 dB acceptance target.
+CRC-validated fading fallback. Research-only candidate-aware time diversity
+retains bounded timing hypotheses and combines reliability-normalized soft
+observations. With a clock grid that brackets the injected channel error, the
+latest -24 dB campaign delivered 45/60 severe-composite frames and 31/60
+strong-selective frames. These results remain provisional and do not establish
+the locked -24 dB acceptance target.
 
 ## Versioning
 

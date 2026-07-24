@@ -1,9 +1,11 @@
 """Tests for batched Aurora Deep validation campaigns."""
 
 import unittest
+from dataclasses import replace
 
 from dsp.deep_codec import DeepCodecConfig, K10_RATE_QUARTER_GENERATORS
 from modem.deep_validation import DeepValidationConfig, run_deep_validation
+from modem.mode_definition import AURORA_ROBUST_MODE
 
 
 class DeepValidationTests(unittest.TestCase):
@@ -91,6 +93,49 @@ class DeepValidationTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.decoded, 1)
+
+    def test_alternate_pilot_geometry_preserves_clean_decode(self) -> None:
+        result = run_deep_validation(
+            DeepValidationConfig(
+                signal_trials=1,
+                noise_trials=0,
+                snr_db=20.0,
+                pilot_interval=64,
+                pilot_symbol_count=8,
+            )
+        )
+        self.assertEqual(result.decoded, 1)
+
+    def test_alternate_symbol_rate_preserves_clean_decode(self) -> None:
+        mode = replace(
+            AURORA_ROBUST_MODE,
+            name="Aurora 62.5 symbol research",
+            symbol_rate=62.5,
+        )
+        result = run_deep_validation(
+            DeepValidationConfig(
+                signal_trials=1,
+                noise_trials=0,
+                snr_db=20.0,
+                mode=mode,
+            )
+        )
+        self.assertEqual(result.decoded, 1)
+
+    def test_two_soft_observations_preserve_clean_decode(self) -> None:
+        result = run_deep_validation(
+            DeepValidationConfig(
+                signal_trials=1,
+                noise_trials=0,
+                snr_db=20.0,
+                soft_observation_count=2,
+            )
+        )
+        self.assertEqual(result.decoded, 1)
+
+    def test_soft_observation_count_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "observation count"):
+            DeepValidationConfig(soft_observation_count=0)
 
 
 if __name__ == "__main__":

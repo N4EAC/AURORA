@@ -73,6 +73,20 @@ class DeepWaveformTests(unittest.TestCase):
         )
         self.assertTrue(np.array_equal(multiplexed[144:], data[128:]))
 
+    def test_alternate_pilot_geometry_has_expected_overhead(self) -> None:
+        data = bits_to_bpsk(([0, 1] * 80))
+        multiplexed = multiplex_deep_pilots(
+            data,
+            interval=64,
+            pilot_symbol_count=8,
+        )
+        self.assertEqual(deep_pilot_overhead(160, 64, 8), 16)
+        self.assertEqual(len(multiplexed), 176)
+        self.assertTrue(np.array_equal(multiplexed[:64], data[:64]))
+        self.assertTrue(
+            np.array_equal(multiplexed[64:72], deep_pilot_symbols(8))
+        )
+
     def test_noise_only_input_is_not_acquired(self) -> None:
         encoded = encode_deep_payload(b"Aurora Deep message!")
         reference = modulate_deep_audio(encoded.bits)

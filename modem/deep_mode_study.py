@@ -88,6 +88,26 @@ DEEP_CHANNEL_PROFILES = {
             ),
         ),
         DeepChannelProfile(
+            "Moderate selective fading",
+            AudioChannelConfig(
+                snr_db=None,
+                multipath_delay_ms=3.0,
+                multipath_gain=0.40,
+                multipath_fading_depth=0.65,
+                multipath_fading_cycles_per_frame=1.5,
+            ),
+        ),
+        DeepChannelProfile(
+            "Strong selective fading",
+            AudioChannelConfig(
+                snr_db=None,
+                multipath_delay_ms=3.0,
+                multipath_gain=0.60,
+                multipath_fading_depth=0.80,
+                multipath_fading_cycles_per_frame=2.0,
+            ),
+        ),
+        DeepChannelProfile(
             "Clock error only",
             AudioChannelConfig(snr_db=None, clock_error_ppm=75.0),
         ),

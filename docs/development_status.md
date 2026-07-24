@@ -84,8 +84,9 @@ reference-depth fading was added, two of four decoded in both modes.
 3. CRC-validated equalization fallback is safer than replacing primary soft
    decisions and provides measurable fading gains.
 4. Further equalizer-threshold tuning is not the highest-value task.
-5. Synchronization and acquisition under severe combined channels are the
-   dominant modeled failures.
+5. Bounded clock search and diversity acquisition substantially reduce severe
+   synchronization failures; selective-fading channel estimation is now the
+   dominant modeled weakness.
 6. The current approximately 31.25 Hz symbol-rate waveform is comfortably
    inside 1 kHz, but future acquisition experiments may evaluate narrower or
    wider occupied bandwidth when processing gain, time diversity, or frequency
@@ -95,19 +96,15 @@ reference-depth fading was added, two of four decoded in both modes.
 
 ## Prioritized next steps
 
-1. Record acquisition diagnostics for rejected severe-profile hypotheses:
-   preamble score, timing rank, energy normalization, carrier hypothesis, and
-   rejection reason.
-2. Compare longer and repeated acquisition structures with time-separated
-   correlation, without changing payload coding.
-3. Test noncoherent or diversity-assisted acquisition when deep fades erase a
-   single preamble interval.
-4. Evaluate acquisition bandwidth and symbol-rate alternatives under identical
-   airtime and energy accounting.
-5. Rerun large paired AWGN, fading, severe-profile, and noise-only campaigns
-   for any promoted acquisition design.
+1. Improve pilot-derived channel estimation under strong selective fading.
+2. Compare estimator candidates at equal airtime on paired severe and selective
+   channel seeds.
+3. Run at least 10,000 noise-only trials for any promoted receiver path.
+4. Measure the added clock-search and candidate-combination runtime.
+5. Revisit pilot spacing only if estimation remains limited by channel
+   variation between pilot groups.
 6. Validate through real sound hardware and a controlled radio channel before
-   enabling the fading fallback or making sensitivity claims.
+   enabling research receiver paths or making sensitivity claims.
 
 ## Post-checkpoint acquisition experiment
 
@@ -129,3 +126,46 @@ Interleaver-only comparisons then delivered 45/100 at 16 columns, 29/100 at
 on the established AWGN seeds, compared with 90/100 at 32 columns, and zero
 false decodes in 100 initial noise trials. The 16-column geometry remains
 provisional pending larger AWGN evidence.
+
+The larger evidence is now available. Paired 1,000-seed AWGN campaigns
+delivered 888 frames at 16 columns and 897 at 32 columns. Paired 500-seed
+severe campaigns delivered 201 and 177 respectively. A lower, CRC-protected
+equalizer confidence threshold improved the 16-column severe result to
+221/500. The 16-column acquisition fallback also produced zero false decodes
+in 1,000 noise-only trials.
+
+The channel model now supports independently time-varying delayed-path gain.
+Moderate selective fading delivered 71/100 at 16 columns and 74/100 at
+8 columns. Strong selective fading delivered only 6/100 and 14/100
+respectively. This confirms that selective cancellation and post-acquisition
+payload recovery remain major weaknesses, and that no single tested
+interleaver geometry dominates every modeled channel.
+
+Pilot interval and length are now configurable in the research waveform. A
+near-equal-overhead 64/8 geometry was rejected after its small-screen gain
+reversed. A 128/32 candidate improved severe delivery from 35/100 to 56/100
+and delivered 90/100 AWGN, but adds 112 pilot symbols or approximately
+3.6 seconds. Equal-airtime comparison remains required.
+## Equal-airtime observation research
+
+- Added a validation-only `soft_observation_count` control; its default remains
+  one and no production mode definition changed.
+- Confirmed clean two-observation decoding and 20/20 delivery in AWGN at
+  -24 dB.
+- Rejected naïve likelihood summation for the severe composite channel after
+  0/20 payload delivery with both strict and permissive acquisition thresholds.
+- Next priority: improve preamble/pilot acquisition and obtain reliability-
+  normalized channel tracking before reconsidering time diversity.
+## Acquisition and time-diversity calibration
+
+- Corrected diversity-search ranking to use normalized known-symbol agreement
+  instead of unnormalized coherent amplitude.
+- Identified an invalid validation setup: +75 ppm clock error was being tested
+  against a receiver grid containing only 0 ppm.
+- Added candidate-aware, RMS-normalized soft combining for validation-only
+  repeated observations.
+- Achieved 45/60 severe-composite and 31/60 strong-selective deliveries at
+  -24 dB with two equal-airtime observations and bounded clock search.
+- Observed 0/300 noise-only false decodes; this screen is useful but too small
+  for a production false-decode claim.
+- Production mode parameters and protocol status remain unchanged.

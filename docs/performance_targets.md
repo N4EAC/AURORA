@@ -121,3 +121,44 @@ and 24/100 at 64 columns. The 16-column candidate delivered 88/100 in the
 established AWGN set versus 90/100 for 32 columns, so the apparent AWGN
 difference requires a larger paired campaign. No mode geometry is changed by
 this result.
+
+Large paired campaigns refined the tradeoff. At -24 dB, 16 columns delivered
+888/1,000 AWGN frames and 201/500 severe composite frames, while 32 columns
+delivered 897/1,000 and 177/500 respectively. Lowering the CRC-fallback
+equalizer confidence threshold to 0.5 improved the 16-column severe result to
+221/500. Zero false decodes occurred in 1,000 acquisition-fallback noise
+trials.
+
+A new independently varying delayed-path model produced 71/100 delivery for
+16 columns under moderate selective fading. Eight columns delivered 74/100 in
+that profile and 14/100 under strong selective fading, versus 6/100 for
+16 columns in the strong profile. No interleaver geometry is frozen; these
+results motivate later fixed-mode or explicitly signaled adaptation.
+
+Pilot geometry remains provisional. A 64/8 near-equal-overhead candidate did
+not survive a 25-seed comparison. Doubling pilot length from 16 to 32 symbols
+at the original 128-symbol cadence improved a 100-seed severe result from
+35/100 to 56/100 and delivered 90/100 on the established AWGN seeds. The
+candidate adds approximately 3.6 seconds, so it must be compared against other
+uses of the same airtime before promotion.
+### Time-diversity acceptance requirement
+
+Repeated observations must be compared at equal total airtime and must include
+per-observation phase, gain, and reliability normalization. Raw likelihood
+summation is not acceptable: it passed the AWGN screen but failed the severe
+composite screen at -24 dB. Any future time-diversity candidate must improve
+CRC-confirmed delivery across both composite and selective-fading profiles
+without increasing false decodes.
+### Calibrated receiver requirements
+
+Composite-channel tests that inject clock error must include a receiver search
+grid that brackets the injected value. Time-diversity candidates must:
+
+- retain bounded timing hypotheses rather than assuming independent acquisitions
+  select the same peak;
+- normalize per-observation likelihood scale and apply a measured reliability
+  weight;
+- require CRC-confirmed payload delivery;
+- exceed the current 75.0% severe-composite and 51.7% strong-selective baselines
+  at -24 dB; and
+- complete a substantially larger noise-only campaign before acceptance.
