@@ -6,6 +6,13 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+from audio.device import (
+    AudioDevice,
+    compatible_outputs,
+    list_audio_devices,
+    preferred_loopback_pair,
+)
+from audio.loopback import AudioLoopbackResult, run_audio_loopback
 from config import AppSettings, SETTINGS
 from dsp.spectrum import compute_spectrum
 from gui.diagnostics_panel import DiagnosticsPanel
@@ -106,7 +113,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     ttk.Label(header, text="Aurora", style="Aurora.Title.TLabel").pack(side=tk.LEFT)
     ttk.Label(
         header,
-        text="SIMULATION - NO RADIO",
+        text="AUDIO TEST - NO RADIO",
         style="Aurora.Warning.TLabel",
     ).pack(side=tk.RIGHT)
 
@@ -381,11 +388,53 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     send_button = ttk.Button(composer, text="RUN LOCAL CODEC TEST")
     send_button.grid(row=0, column=1)
 
+    loopback_controls = ttk.Frame(composer, style="Aurora.TFrame")
+    loopback_controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+    loopback_controls.columnconfigure(1, weight=1)
+    loopback_controls.columnconfigure(3, weight=1)
+    input_device_name = tk.StringVar()
+    output_device_name = tk.StringVar()
+    loopback_status = tk.StringVar(value="Audio loopback idle")
+    input_devices: dict[str, AudioDevice] = {}
+    output_devices: dict[str, AudioDevice] = {}
+    all_output_devices: tuple[AudioDevice, ...] = ()
+    ttk.Label(
+        loopback_controls, text="Input", style="Aurora.Status.TLabel"
+    ).grid(row=0, column=0, padx=(0, 4))
+    input_device_box = ttk.Combobox(
+        loopback_controls,
+        textvariable=input_device_name,
+        state="readonly",
+        width=28,
+    )
+    input_device_box.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    ttk.Label(
+        loopback_controls, text="Output", style="Aurora.Status.TLabel"
+    ).grid(row=0, column=2, padx=(0, 4))
+    output_device_box = ttk.Combobox(
+        loopback_controls,
+        textvariable=output_device_name,
+        state="readonly",
+        width=28,
+    )
+    output_device_box.grid(row=0, column=3, sticky="ew", padx=(0, 8))
+    refresh_audio_button = ttk.Button(loopback_controls, text="REFRESH AUDIO")
+    refresh_audio_button.grid(row=0, column=4, padx=(0, 6))
+    loopback_button = ttk.Button(loopback_controls, text="RUN AUDIO LOOPBACK")
+    loopback_button.grid(row=0, column=5)
+    ttk.Label(
+        loopback_controls,
+        textvariable=loopback_status,
+        style="Aurora.Status.TLabel",
+    ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+
     simulation_running = False
     animation_job: str | None = None
     benchmark_job: str | None = None
     benchmark_running = False
     benchmark_results: queue.Queue[object] = queue.Queue()
+    loopback_results: queue.Queue[object] = queue.Queue()
+    loopback_running = False
     sweep_cancel = threading.Event()
     profile_thresholds: dict[str, dict[str, dict[str, float | None]]] = {}
 
@@ -456,6 +505,187 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 error=str(error),
             )
             _append_history(history, f"[TEST ERROR] {error}", "error")
+
+    def refresh_audio_devices() -> None:
+        nonlocal input_devices, output_devices, all_output_devices
+        try:
+            inputs = list_audio_devices("input")
+            outputs = list_audio_devices("output")
+            all_output_devices = outputs
+            input_devices = {
+                f"{device.index}: {device.name} [{device.host_api_name}]": device
+                for device in inputs
+            }
+            input_device_box.configure(values=tuple(input_devices))
+            preferred = preferred_loopback_pair(inputs, outputs)
+            if preferred is not None:
+                preferred_input, preferred_output = preferred
+                input_label = next(
+                    label
+                    for label, device in input_devices.items()
+                    if device.index == preferred_input.index
+                )
+                input_device_name.set(input_label)
+                update_compatible_outputs(preferred_output.index)
+            elif input_devices:
+                input_device_name.set(next(iter(input_devices)))
+                update_compatible_outputs()
+            loopback_status.set(
+                f"Audio devices ready: {len(inputs)} input, {len(outputs)} output; "
+                "outputs filtered by host interface"
+            )
+        except Exception as error:
+            loopback_status.set(f"Audio discovery failed: {error}")
+            session_log.record(
+                "AUDIO_DEVICE_DISCOVERY_ERROR",
+                error_type=type(error).__name__,
+                error=str(error),
+            )
+
+    def update_compatible_outputs(
+        preferred_output_index: int | None = None,
+    ) -> None:
+        nonlocal output_devices
+        selected_input = input_devices.get(input_device_name.get())
+        if selected_input is None:
+            output_devices = {}
+        else:
+            outputs = compatible_outputs(selected_input, all_output_devices)
+            output_devices = {
+                f"{device.index}: {device.name} [{device.host_api_name}]": device
+                for device in outputs
+            }
+        output_device_box.configure(values=tuple(output_devices))
+        selected_label = next(
+            (
+                label
+                for label, device in output_devices.items()
+                if device.index == preferred_output_index
+            ),
+            None,
+        )
+        if selected_label is None and output_device_name.get() in output_devices:
+            selected_label = output_device_name.get()
+        output_device_name.set(
+            selected_label or (next(iter(output_devices)) if output_devices else "")
+        )
+        if selected_input is not None:
+            loopback_status.set(
+                f"Showing {len(output_devices)} outputs compatible with "
+                f"{selected_input.host_api_name}"
+            )
+
+    def input_device_changed(event: object | None = None) -> None:
+        del event
+        update_compatible_outputs()
+
+    def poll_loopback() -> None:
+        nonlocal loopback_running
+        try:
+            outcome = loopback_results.get_nowait()
+        except queue.Empty:
+            if loopback_running:
+                root.after(100, poll_loopback)
+            return
+        loopback_running = False
+        loopback_button.configure(state=tk.NORMAL)
+        refresh_audio_button.configure(state=tk.NORMAL)
+        if isinstance(outcome, Exception):
+            loopback_status.set(f"Loopback failed: {outcome}")
+            _append_history(history, f"[AUDIO LOOPBACK ERROR] {outcome}", "error")
+            session_log.record(
+                "AUDIO_LOOPBACK_ERROR",
+                error_type=type(outcome).__name__,
+                error=str(outcome),
+            )
+            return
+        result: AudioLoopbackResult = outcome
+        success = result.received_text == result.transmitted_text
+        loopback_status.set(
+            f"{'PASS' if success else 'FAIL'} | sync "
+            f"{result.diagnostics.sync_metric:.3f} | offset "
+            f"{result.diagnostics.frequency_offset_hz:+.3f} Hz | peak "
+            f"{result.peak_level:.3f}"
+        )
+        _append_history(
+            history,
+            f"[AUDIO TX] {result.transmitted_text}",
+            "tx",
+        )
+        _append_history(
+            history,
+            f"[AUDIO RX/CRC {'PASS' if success else 'FAIL'}] "
+            f"{result.received_text}",
+            "rx" if success else "error",
+        )
+        _append_history(history, f"[AUDIO WAV] {result.capture_path.name}")
+        session_log.record(
+            "AUDIO_LOOPBACK_RESULT",
+            success=success,
+            input_device=input_device_name.get(),
+            output_device=output_device_name.get(),
+            transmitted_text=result.transmitted_text,
+            received_text=result.received_text,
+            capture_path=str(result.capture_path),
+            duration_seconds=round(result.duration_seconds, 6),
+            sync_metric=round(result.diagnostics.sync_metric, 6),
+            frequency_offset_hz=round(
+                result.diagnostics.frequency_offset_hz, 6
+            ),
+            timing_sample=result.diagnostics.symbol_start_sample,
+            peak_level=round(result.peak_level, 6),
+            clipped=result.clipped,
+        )
+
+    def start_audio_loopback() -> None:
+        nonlocal loopback_running
+        if loopback_running:
+            return
+        try:
+            selected_message = message.get().strip()
+            selected_input = input_devices[input_device_name.get()]
+            selected_output = output_devices[output_device_name.get()]
+            if selected_input.host_api_index != selected_output.host_api_index:
+                raise ValueError("Input and output host interfaces must match")
+            if not selected_message:
+                raise ValueError("Enter a loopback test message")
+        except (KeyError, ValueError) as error:
+            loopback_status.set(f"Loopback cannot start: {error}")
+            return
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        capture_path = settings.log_directory / f"aurora_loopback_{timestamp}.wav"
+        loopback_running = True
+        loopback_button.configure(state=tk.DISABLED)
+        refresh_audio_button.configure(state=tk.DISABLED)
+        loopback_status.set("Capturing while Aurora audio is transmitted...")
+        session_log.record(
+            "AUDIO_LOOPBACK_START",
+            input_device=input_device_name.get(),
+            output_device=output_device_name.get(),
+            message_length=len(selected_message),
+            capture_path=str(capture_path),
+            radio_control=False,
+        )
+
+        def worker() -> None:
+            try:
+                loopback_results.put(
+                    run_audio_loopback(
+                        selected_message,
+                        input_device=selected_input.index,
+                        output_device=selected_output.index,
+                        capture_path=capture_path,
+                    )
+                )
+            except Exception as error:
+                loopback_results.put(error)
+
+        threading.Thread(
+            target=worker,
+            name="AuroraAudioLoopback",
+            daemon=True,
+        ).start()
+        root.after(100, poll_loopback)
 
     def apply_preset(event: object | None = None) -> None:
         del event
@@ -821,15 +1051,19 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     )
     run_sweep_button.configure(command=start_robustness_sweep)
     cancel_sweep_button.configure(command=cancel_robustness_sweep)
+    refresh_audio_button.configure(command=refresh_audio_devices)
+    loopback_button.configure(command=start_audio_loopback)
+    input_device_box.bind("<<ComboboxSelected>>", input_device_changed)
     preset_box.bind("<<ComboboxSelected>>", apply_preset)
     entry.bind("<Return>", lambda event: run_local_test())
     root.protocol("WM_DELETE_WINDOW", close_application)
     _append_history(
         history,
-        "[READY] Local simulation only. Audio, CAT, PTT, and RF are inactive.",
+        "[READY] Local simulation and audio loopback. CAT, PTT, and RF are inactive.",
     )
     _append_history(history, f"[LOG] Session debug: {session_log.path.name}")
     session_log.record("GUI_READY", session_log=session_log.path.name)
+    refresh_audio_devices()
     return root
 
 

@@ -9,3 +9,4 @@ __pycache__/
 # Runtime application and operator-session logs remain local. Keep source,
 # configuration, documentation, and deliberate test fixtures under logs/ tracked.
 logs/*.log
+logs/aurora_loopback_*.wav

@@ -248,6 +248,13 @@ The current implementation status, completed validation, end-of-day
 conclusions, and prioritized next steps are recorded in
 `docs/development_status.md`.
 
+The operator UI also includes an audio-only real-time loopback test. It plays
+an Aurora waveform through a selected output while capturing the selected
+input, then performs synchronization, soft decoding, CRC validation, WAV
+capture, and structured session logging. Compatible outputs are filtered by
+PortAudio host interface, and an available virtual-cable pair is preferred.
+This workflow never activates CAT, PTT, or RF control.
+
 Long campaigns use `modem.deep_validation.DeepValidationConfig` and
 `run_deep_validation`. The runner supports deterministic batch ranges,
 cancellation, confidence intervals, runtime measurements, optional traced peak

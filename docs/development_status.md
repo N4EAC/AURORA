@@ -194,3 +194,17 @@ and delivered 90/100 AWGN, but adds 112 pilot symbols or approximately
 - Measured total wall time of 9:39:44 with 12 workers.
 - The 95% Wilson upper bound is approximately 0.0384% for this offline model.
 - Real audio/radio validation remains required before operational claims.
+## First real-time audio loopback
+
+Aurora completed its first CRC-confirmed real-time audio-device loopback on
+July 24, 2026. The successful route used `CABLE Input` as Aurora's output and
+`CABLE Output` as Aurora's input. The message `123` decoded exactly, with a
+0.999904 synchronization metric, 0.0 Hz estimated frequency offset, 0.769 peak
+level, and no clipping.
+
+Earlier attempts established two UI requirements. Unrouted device pairs
+produced low preamble correlation, while devices from incompatible PortAudio
+host interfaces produced error -9993. Device discovery now records host
+interface metadata, filters outputs to those compatible with the selected
+input, and prefers an obvious virtual-cable pair. This remains an audio-only
+development test with no CAT, PTT, or RF activity.
