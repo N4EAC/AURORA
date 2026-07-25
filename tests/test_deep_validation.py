@@ -163,6 +163,21 @@ class DeepValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "observation count"):
             DeepValidationConfig(soft_observation_count=0)
 
+    def test_acquisition_phase_step_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "phase step"):
+            DeepValidationConfig(acquisition_phase_step_samples=0)
+
+    def test_coarse_acquisition_phase_step_preserves_clean_decode(self) -> None:
+        result = run_deep_validation(
+            DeepValidationConfig(
+                signal_trials=1,
+                noise_trials=0,
+                snr_db=20.0,
+                acquisition_phase_step_samples=8,
+            )
+        )
+        self.assertEqual(result.decoded, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

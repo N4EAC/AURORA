@@ -170,3 +170,11 @@ arbitration. The corrected receiver currently delivers 39/40 severe-composite
 and 26/40 strong-selective frames at -24 dB. These small results justify further
 study but not a sensitivity or false-decode claim. Optimize or batch the
 receiver before completing at least 10,000 matched-path noise trials.
+### Completed matched-path false-decode baseline
+
+The promoted two-observation receiver completed 10,000 noise-only trials with
+zero false decodes. The 95% Wilson upper bound is approximately 0.0384%.
+Future receiver changes must repeat a matched-path campaign and must not worsen
+this baseline. Acceptance still requires representative interference, real
+sound-device, and controlled radio-channel validation; simulated Gaussian
+noise alone is insufficient for an operational false-decode claim.

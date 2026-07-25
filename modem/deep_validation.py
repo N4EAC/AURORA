@@ -77,6 +77,7 @@ class DeepValidationConfig:
     pilot_symbol_count: int = 16
     mode: ModeDefinition = AURORA_ROBUST_MODE
     soft_observation_count: int = 1
+    acquisition_phase_step_samples: int = 1
 
     def __post_init__(self) -> None:
         if min(self.signal_trials, self.noise_trials, self.start_trial) < 0:
@@ -116,6 +117,8 @@ class DeepValidationConfig:
             raise ValueError("Pilot geometry values must be positive")
         if self.soft_observation_count <= 0:
             raise ValueError("Soft observation count must be positive")
+        if self.acquisition_phase_step_samples <= 0:
+            raise ValueError("Acquisition phase step must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +191,7 @@ def _decode_candidates(
         "pilot_interval": config.pilot_interval,
         "pilot_symbol_count": config.pilot_symbol_count,
         "mode": config.mode,
+        "acquisition_phase_step_samples": config.acquisition_phase_step_samples,
     }
     primary_candidates = recover_deep_candidate_likelihoods(
         audio,
@@ -319,6 +323,7 @@ def _decode_soft_observations(
             "pilot_interval": config.pilot_interval,
             "pilot_symbol_count": config.pilot_symbol_count,
             "mode": config.mode,
+            "acquisition_phase_step_samples": config.acquisition_phase_step_samples,
         }
         recovered = recover_deep_candidate_likelihoods(
             audio,

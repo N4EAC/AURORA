@@ -410,3 +410,32 @@ approximately 204 seconds. At that measured rate, 10,000 trials would require
 about 56.7 serial hours. The large false-decode campaign remains required and
 must be batched or optimized; the small runtime sample is not statistical
 evidence of safety.
+### Matched-path 10,000-trial noise campaign
+
+The bounded receiver now supports coarse acquisition-phase sampling followed by
+the existing local timing refinement. A phase step of eight audio samples
+preserved the screened adverse-channel outcomes and reduced matched noise-trial
+runtime. Diversity-only acquisition and mandatory acquisition of both repeated
+observations were tested and rejected because they reduced signal delivery.
+The promoted campaign therefore retained coherent-first acquisition, diversity
+fallback, and the ability to decode when one independently received observation
+is unusable.
+
+The completed campaign used:
+
+- 10,000 independent noise-only trials in ten resumable waves;
+- 12 parallel workers with disjoint deterministic seed blocks;
+- two observations per trial;
+- the seven-point -100 to +100 ppm clock-search grid;
+- 128/32 pilot geometry;
+- baseline and CRC-arbitrated equalized candidates;
+- acquisition diversity fallback;
+- phase step 8 with bounded local timing refinement; and
+- the same candidate-aware decoder used by the promoted signal campaigns.
+
+All 10,000 trials completed with zero false decodes in 9 hours, 39 minutes,
+44 seconds. The two-sided 95% Wilson interval is 0 to
+0.0003839984 probability, giving an upper bound of approximately 0.0384%.
+This is strong offline evidence for the tested simulation and thresholds, but
+it is not proof of zero false decodes and does not cover real receiver noise,
+interference, sound hardware, or radio artifacts.

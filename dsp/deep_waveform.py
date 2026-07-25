@@ -570,6 +570,7 @@ def recover_deep_candidate_likelihoods(
         np.arange(-0.03, 0.0301, 0.005)
     ),
     acquisition_peaks: int = 5,
+    acquisition_phase_step_samples: int = 1,
     timing_step_samples: int = 16,
     decode_candidates: int = 3,
     fading_equalization: bool = False,
@@ -582,7 +583,12 @@ def recover_deep_candidate_likelihoods(
     mode: ModeDefinition = AURORA_ROBUST_MODE,
 ) -> tuple[DeepWaveformResult, ...]:
     """Return a bounded list ranked by coherent preamble-plus-pilot energy."""
-    if min(acquisition_peaks, timing_step_samples, decode_candidates) <= 0:
+    if min(
+        acquisition_peaks,
+        acquisition_phase_step_samples,
+        timing_step_samples,
+        decode_candidates,
+    ) <= 0:
         raise ValueError("Deep receiver search counts must be positive")
     if not 0.0 <= erasure_gain_ratio < 1.0:
         raise ValueError("Erasure gain ratio must be between zero and one")
@@ -596,6 +602,8 @@ def recover_deep_candidate_likelihoods(
         pilot_symbol_count,
     )
     ratio = samples_per_symbol(mode)
+    if acquisition_phase_step_samples > ratio:
+        raise ValueError("Acquisition phase step exceeds samples per symbol")
     waveform_count = (
         PREAMBLE_SYMBOL_COUNT
         + payload_bit_count
@@ -624,7 +632,7 @@ def recover_deep_candidate_likelihoods(
             matched = _matched_baseband(corrected, mode)
             raw_peaks: list[tuple[float, int]] = []
             preamble = acquisition_symbols().astype(np.complex128)
-            for phase in range(ratio):
+            for phase in range(0, ratio, acquisition_phase_step_samples):
                 symbols = matched[phase::ratio]
                 final_start = len(symbols) - waveform_count
                 if final_start < 0:

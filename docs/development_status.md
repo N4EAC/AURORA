@@ -182,3 +182,15 @@ and delivered 90/100 AWGN, but adds 112 pilot symbols or approximately
 - Measured approximately 20.4 seconds per two-observation noise trial with the
   seven-point clock grid. The required 10,000-trial campaign remains pending
   because the current implementation would require about 56.7 serial hours.
+## 10,000-trial matched-path noise result
+
+- Added configurable coarse acquisition-phase sampling while retaining bounded
+  local timing refinement.
+- Rejected diversity-only acquisition and mandatory acquisition of both
+  observations because adverse-signal delivery declined.
+- Completed 10,000 two-observation noise trials using the exact promoted
+  coherent-first/diversity-fallback and CRC-arbitrated receiver.
+- Observed zero false decodes across all ten resumable waves.
+- Measured total wall time of 9:39:44 with 12 workers.
+- The 95% Wilson upper bound is approximately 0.0384% for this offline model.
+- Real audio/radio validation remains required before operational claims.

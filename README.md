@@ -263,7 +263,10 @@ The next receiver correction retained CRC-arbitrated equalized candidates in
 the multi-observation search. An independent 40-seed campaign delivered 39/40
 severe-composite and 26/40 strong-selective frames. Matched-path noise
 validation is computationally expensive and the required 10,000-trial campaign
-remains pending; no false-decode or on-air sensitivity claim is made.
+has now completed with zero false decodes. The 95% Wilson upper bound is
+approximately 0.0384% for the tested offline model. This does not cover real
+receiver noise, interference, audio hardware, or radio artifacts, so no
+on-air sensitivity or zero-false-decode claim is made.
 
 ## Versioning
 
