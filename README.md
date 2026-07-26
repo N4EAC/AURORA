@@ -5,13 +5,42 @@
 Aurora is a new adaptive digital communications mode designed for reliable,
 weak-signal operation under real-world HF propagation conditions.
 
+## UPDATES — July 26, 2026
+
+- Added a real-time, audio-only loopback workflow to the Tkinter interface.
+  Aurora can simultaneously play a waveform, capture the routed input, decode
+  the message, validate its CRC, and retain WAV and structured session
+  diagnostics without activating CAT, PTT, or RF.
+- Added PortAudio host-interface awareness, compatible device-pair filtering,
+  and automatic preference for an available VB-CABLE route.
+- Completed output-level calibration from 25% through 90% without clipping or
+  decode failures.
+- Completed 348/349 CRC-confirmed VB-CABLE deliveries, including a 240/240,
+  approximately 49-minute stability campaign. The sole transient failure passed
+  five consecutive exact retries.
+- Published paired WAV evidence for the transient `A085` failure and a
+  successful exact retry under `tests/fixtures/audio/`.
+- Improved Deep receiver acquisition, clock search, selective-fading recovery,
+  and candidate-aware normalized time diversity. The latest promoted offline
+  campaigns delivered 39/40 severe-composite frames and 26/40
+  strong-selective-fading frames at the provisional -24 dB research point.
+- Completed 10,000 matched-path, two-observation noise-only trials with zero
+  false decodes. The 95% Wilson upper bound is approximately 0.0384% for that
+  offline Gaussian-noise model.
+- Expanded the automated regression suite to 165 tests.
+
+These are development results, not an over-the-air protocol, sensitivity
+guarantee, or operational false-decode claim. Physical sound-device,
+representative interference, and controlled radio-channel validation remain
+required.
+
 ## Project status
 
-Aurora is in the initial development stage. The repository currently provides
-the foundational project structure and a simulation-only operator interface.
-The interface can exercise the symbol-domain codec locally and animate the
-spectrum and waterfall from a synthetic test signal. It does not open audio or
-radio hardware.
+Aurora is in active development. The repository provides the foundational
+project structure, offline modem research, a simulation interface, and an
+audio-only real-time loopback workflow. The application can open explicitly
+selected audio devices for operator-approved loopback tests. Radio integration
+remains inactive: the loopback workflow does not use CAT, PTT, or RF.
 
 ## Design goals
 
