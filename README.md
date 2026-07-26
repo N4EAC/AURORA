@@ -41,6 +41,15 @@ guarantee, or operational false-decode claim. Physical sound-device,
 representative interference, and controlled radio-channel validation remain
 required.
 
+## Development documentation
+
+- [Current development status](docs/development_status.md)
+- [Continuous audio receiver architecture](docs/continuous_audio_receiver.md)
+- [Deep weak-signal mode research](docs/deep_mode_study.md)
+- [Performance targets and acceptance boundaries](docs/performance_targets.md)
+- [SNR definitions and measurement conventions](docs/snr_conventions.md)
+- [Published real-audio validation fixtures](tests/fixtures/audio/README.md)
+
 ## Project status
 
 Aurora is in active development. The repository provides the foundational
