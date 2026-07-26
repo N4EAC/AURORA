@@ -208,3 +208,34 @@ host interfaces produced error -9993. Device discovery now records host
 interface metadata, filters outputs to those compatible with the selected
 input, and prefers an obvious virtual-cable pair. This remains an audio-only
 development test with no CAT, PTT, or RF activity.
+## Extended VB-CABLE reliability campaign
+
+Aurora completed an automated real-audio campaign using MME device 10
+(`CABLE Output`) as the input and MME device 16 (`CABLE Input`) as the output.
+CAT, PTT, and RF remained inactive.
+
+All four output-level calibration frames passed:
+
+- 25% gain: synchronization 0.999884, captured peak 0.206;
+- 50% gain: synchronization 0.999900, captured peak 0.396;
+- 75% gain: synchronization 0.999902, captured peak 0.596; and
+- 90% gain: synchronization 0.999899, captured peak 0.715.
+
+No calibration frame clipped and estimated frequency error was effectively
+zero. A 75% output gain was selected for reliability testing.
+
+The first 100-frame campaign delivered 99/100 frames. The failed frame had
+excellent preamble synchronization but 190 hard symbol errors beginning after
+payload symbol 46, consistent with a transient mid-frame audio discontinuity.
+The exact failed message then passed five consecutive retries.
+
+A subsequent 240-frame, approximately 49-minute stability campaign delivered
+240/240 frames. Its minimum/mean synchronization metrics were
+0.981150/0.999044, frequency estimates ranged from approximately
+-0.0000026 to +0.0000136 Hz, captured peaks ranged from 0.577 to 0.584, and no
+capture clipped. Across calibration, the initial campaign, retries, and the
+stability campaign, 348/349 frames delivered successfully.
+
+The next receiver reliability priority is detection and recovery of transient
+mid-frame audio discontinuities or dropped/resampled blocks. Real physical
+sound-device and controlled radio-channel testing are still required.

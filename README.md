@@ -255,6 +255,12 @@ capture, and structured session logging. Compatible outputs are filtered by
 PortAudio host interface, and an available virtual-cable pair is preferred.
 This workflow never activates CAT, PTT, or RF control.
 
+An extended VB-CABLE campaign has delivered 348 of 349 real-time audio frames,
+including a 240/240 approximately 49-minute stability run. The sole failure was
+a transient mid-frame symbol disruption and passed five exact retries. These
+results validate the virtual audio path but do not replace physical sound-device
+or controlled radio-channel testing.
+
 Long campaigns use `modem.deep_validation.DeepValidationConfig` and
 `run_deep_validation`. The runner supports deterministic batch ranges,
 cancellation, confidence intervals, runtime measurements, optional traced peak

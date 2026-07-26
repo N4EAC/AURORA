@@ -32,12 +32,15 @@ def run_audio_loopback(
     input_device: int,
     output_device: int,
     capture_path: str | Path,
+    output_gain: float = 1.0,
     mode: ModeDefinition = AURORA_ROBUST_MODE,
 ) -> AudioLoopbackResult:
     """Play one Aurora frame, capture it simultaneously, and decode the result."""
     text = message.strip()
     if not text:
         raise ValueError("Enter a loopback test message")
+    if not 0.0 < output_gain <= 1.0:
+        raise ValueError("Loopback output gain must be greater than zero and at most one")
     transmission = encode_payload(
         text.encode("utf-8"),
         modulation=mode.modulation,
@@ -49,7 +52,7 @@ def run_audio_loopback(
         leading_silence_samples=mode.audio_sample_rate,
     )
     samples = np.pad(
-        np.asarray(waveform.samples, dtype=np.float32),
+        np.asarray(waveform.samples, dtype=np.float32) * output_gain,
         (0, mode.audio_sample_rate),
     )
     captured = sd.playrec(
