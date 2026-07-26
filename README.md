@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Aurora_logo.png" alt="Aurora logo" width="700">
+</p>
+
 # Aurora
 
 **Project ID:** AURORA-HF-MODEM-2026
