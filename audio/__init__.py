@@ -1,6 +1,12 @@
 """Audio input, output, and file handling for Aurora."""
 
 from audio.buffer import AudioBuffer
+from audio.continuous_receiver import (
+    ContinuousAudioReceiver,
+    ContinuousDecodeEvent,
+    ContinuousReceiverConfig,
+    ContinuousReceiverDiagnostics,
+)
 from audio.device import (
     AudioDevice,
     compatible_outputs,
@@ -13,6 +19,10 @@ from audio.wav import read_wav, write_wav
 
 __all__ = [
     "AudioBuffer",
+    "ContinuousAudioReceiver",
+    "ContinuousDecodeEvent",
+    "ContinuousReceiverConfig",
+    "ContinuousReceiverDiagnostics",
     "AudioDevice",
     "AudioDuplexStream",
     "AudioInputStream",

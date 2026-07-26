@@ -7,10 +7,21 @@ from unittest.mock import patch
 
 import numpy as np
 
-from audio.loopback import run_audio_loopback
+from audio.loopback import run_audio_loopback, run_deep_audio_loopback
 
 
 class AudioLoopbackTests(unittest.TestCase):
+    def test_deep_payload_length_is_validated_before_audio_access(self) -> None:
+        with patch("audio.loopback.sd.playrec") as playrec:
+            with self.assertRaisesRegex(ValueError, "exactly 20"):
+                run_deep_audio_loopback(
+                    b"short",
+                    input_device=1,
+                    output_device=2,
+                    capture_path="unused.wav",
+                )
+        playrec.assert_not_called()
+
     def test_empty_message_is_rejected_before_audio_access(self) -> None:
         with patch("audio.loopback.sd.playrec") as playrec:
             with self.assertRaisesRegex(ValueError, "message"):
@@ -72,6 +83,24 @@ class AudioLoopbackTests(unittest.TestCase):
                     output_gain=0.5,
                 )
         self.assertLess(observed_peak, 0.5)
+
+    def test_deep_full_duplex_capture_decodes_and_writes_wav(self) -> None:
+        def loopback(samples, **options):
+            self.assertEqual(options["device"], (1, 2))
+            return samples.copy()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "deep_capture.wav"
+            with patch("audio.loopback.sd.playrec", side_effect=loopback):
+                result = run_deep_audio_loopback(
+                    b"Aurora Deep message!",
+                    input_device=1,
+                    output_device=2,
+                    capture_path=path,
+                )
+            self.assertEqual(result.received_payload, b"Aurora Deep message!")
+            self.assertTrue(path.exists())
+            self.assertFalse(result.clipped)
 
 
 if __name__ == "__main__":

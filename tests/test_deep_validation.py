@@ -4,12 +4,45 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
+import numpy as np
+
+from audio.buffer import AudioBuffer
+from dsp.audio_channel import AudioChannelConfig
 from dsp.deep_codec import DeepCodecConfig, K10_RATE_QUARTER_GENERATORS
-from modem.deep_validation import DeepValidationConfig, run_deep_validation
+from modem.deep_mode_study import DeepChannelProfile
+from modem.deep_validation import (
+    DeepValidationConfig,
+    _noise_audio,
+    run_deep_validation,
+)
 from modem.mode_definition import AURORA_ROBUST_MODE
 
 
 class DeepValidationTests(unittest.TestCase):
+    def test_noise_audio_applies_selected_interference_profile(self) -> None:
+        reference = AudioBuffer(np.ones(12_000, dtype=np.float32) * 0.1, 12_000)
+        baseline = _noise_audio(
+            reference,
+            DeepValidationConfig(signal_trials=0, noise_trials=1),
+            np.random.default_rng(90),
+        )
+        interfered = _noise_audio(
+            reference,
+            DeepValidationConfig(
+                signal_trials=0,
+                noise_trials=1,
+                profile=DeepChannelProfile(
+                    "Tone",
+                    AudioChannelConfig(
+                        interference_tone_hz=1_500.0,
+                        interference_tone_amplitude=0.5,
+                    ),
+                ),
+            ),
+            np.random.default_rng(90),
+        )
+        self.assertFalse(np.array_equal(baseline.samples, interfered.samples))
+
     def test_noise_uses_configured_soft_observation_count(self) -> None:
         decoded = (False, False, False, 0.0, 0.0, False, 0.0, 0.0)
         with (

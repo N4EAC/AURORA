@@ -174,7 +174,9 @@ def _noise_audio(
         config.reference_bandwidth_hz,
     )
     samples = random.normal(0.0, math.sqrt(variance), reference.frame_count)
-    return AudioBuffer(samples.astype(np.float32), reference.sample_rate)
+    noise = AudioBuffer(samples.astype(np.float32), reference.sample_rate)
+    interference_channel = replace(config.profile.channel, snr_db=None)
+    return apply_audio_channel(noise, interference_channel, random)
 
 
 def _decode_candidates(

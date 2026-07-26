@@ -239,3 +239,27 @@ stability campaign, 348/349 frames delivered successfully.
 The next receiver reliability priority is detection and recovery of transient
 mid-frame audio discontinuities or dropped/resampled blocks. Real physical
 sound-device and controlled radio-channel testing are still required.
+## Continuous receive and interference development
+
+Aurora now has a fixed-geometry continuous audio receiver with a bounded rolling
+buffer. It accepts arbitrary input blocks, decodes outside the real-time audio
+callback, emits only CRC-confirmed payloads, and records failed-window,
+discontinuity, and dropped-sample counters. A real VB-CABLE streaming test
+decoded `CRX` with 0.999904 synchronization and no recovery events.
+
+The UI exposes start/stop continuous receive and a matching audio-only transmit
+control. Geometry is derived from the current expected message; changing the
+message requires restarting receive. This is a development bridge, not
+unknown-length over-the-air framing.
+
+A separate research-only Deep audio loopback decoded the 20-byte
+`Aurora Deep message!` payload through VB-CABLE. The 43.312-second capture had
+a 0.999903 acquisition-diversity score, zero carrier/clock hypotheses, 0.584
+peak level, no clipping, and a valid CRC.
+
+The offline audio channel now supports seeded narrowband tone and correlated
+colored-noise interference in addition to existing AWGN, fading, multipath, and
+impulses. At the provisional -24 dB point, a promoted strong combined profile
+delivered 94/100 frames with no acquisition failures and six CRC failures.
+Matched interference/noise-only testing produced zero false decodes in 300
+trials. This sample is informative but too small for an operational claim.

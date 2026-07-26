@@ -5,16 +5,33 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+from dataclasses import asdict
 
+import numpy as np
+
+from audio.buffer import AudioBuffer
+from audio.continuous_receiver import (
+    ContinuousAudioReceiver,
+    ContinuousReceiverConfig,
+)
 from audio.device import (
     AudioDevice,
     compatible_outputs,
     list_audio_devices,
     preferred_loopback_pair,
 )
-from audio.loopback import AudioLoopbackResult, run_audio_loopback
+from audio.loopback import (
+    AudioLoopbackResult,
+    DeepAudioLoopbackResult,
+    run_audio_loopback,
+    run_deep_audio_loopback,
+)
+from audio.playback import play_audio, stop_playback
+from audio.streaming import AudioInputStream
 from config import AppSettings, SETTINGS
+from dsp.core import encode_payload
 from dsp.spectrum import compute_spectrum
+from dsp.waveform import modulate_audio
 from gui.diagnostics_panel import DiagnosticsPanel
 from gui.spectrum_view import SpectrumView
 from gui.testing_controller import (
@@ -422,11 +439,25 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     refresh_audio_button.grid(row=0, column=4, padx=(0, 6))
     loopback_button = ttk.Button(loopback_controls, text="RUN AUDIO LOOPBACK")
     loopback_button.grid(row=0, column=5)
+    continuous_rx_button = ttk.Button(
+        loopback_controls, text="START CONTINUOUS RX"
+    )
+    continuous_rx_button.grid(row=1, column=4, pady=(6, 0), padx=(0, 6))
+    continuous_send_button = ttk.Button(
+        loopback_controls,
+        text="SEND TO CONT RX",
+        state=tk.DISABLED,
+    )
+    continuous_send_button.grid(row=1, column=5, pady=(6, 0))
+    deep_loopback_button = ttk.Button(
+        loopback_controls, text="RUN DEEP LOOPBACK"
+    )
+    deep_loopback_button.grid(row=1, column=3, pady=(6, 0), padx=(0, 6))
     ttk.Label(
         loopback_controls,
         textvariable=loopback_status,
         style="Aurora.Status.TLabel",
-    ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
 
     simulation_running = False
     animation_job: str | None = None
@@ -435,6 +466,12 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     benchmark_results: queue.Queue[object] = queue.Queue()
     loopback_results: queue.Queue[object] = queue.Queue()
     loopback_running = False
+    continuous_stream: AudioInputStream | None = None
+    continuous_receiver: ContinuousAudioReceiver | None = None
+    continuous_stop = threading.Event()
+    continuous_blocks: queue.Queue[AudioBuffer] = queue.Queue()
+    continuous_events: queue.Queue[object] = queue.Queue()
+    continuous_expected_text = ""
     sweep_cancel = threading.Event()
     profile_thresholds: dict[str, dict[str, dict[str, float | None]]] = {}
 
@@ -589,6 +626,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             return
         loopback_running = False
         loopback_button.configure(state=tk.NORMAL)
+        deep_loopback_button.configure(state=tk.NORMAL)
         refresh_audio_button.configure(state=tk.NORMAL)
         if isinstance(outcome, Exception):
             loopback_status.set(f"Loopback failed: {outcome}")
@@ -597,6 +635,42 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 "AUDIO_LOOPBACK_ERROR",
                 error_type=type(outcome).__name__,
                 error=str(outcome),
+            )
+            return
+        if isinstance(outcome, DeepAudioLoopbackResult):
+            success = outcome.received_payload == outcome.transmitted_payload
+            received_text = outcome.received_payload.decode(
+                "utf-8",
+                errors="replace",
+            )
+            loopback_status.set(
+                f"DEEP {'PASS' if success else 'FAIL'} | acquisition "
+                f"{outcome.diagnostics.acquisition_diversity_score:.3f} | "
+                f"peak {outcome.peak_level:.3f}"
+            )
+            _append_history(
+                history,
+                f"[DEEP AUDIO RX/CRC {'PASS' if success else 'FAIL'}] "
+                f"{received_text}",
+                "rx" if success else "error",
+            )
+            session_log.record(
+                "DEEP_AUDIO_LOOPBACK_RESULT",
+                success=success,
+                received_text=received_text,
+                capture_path=str(outcome.capture_path),
+                acquisition_score=round(
+                    outcome.diagnostics.acquisition_score,
+                    6,
+                ),
+                acquisition_diversity_score=round(
+                    outcome.diagnostics.acquisition_diversity_score,
+                    6,
+                ),
+                pilot_quality=round(outcome.diagnostics.pilot_quality, 6),
+                peak_level=round(outcome.peak_level, 6),
+                clipped=outcome.clipped,
+                over_the_air_protocol=False,
             )
             return
         result: AudioLoopbackResult = outcome
@@ -656,6 +730,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         capture_path = settings.log_directory / f"aurora_loopback_{timestamp}.wav"
         loopback_running = True
         loopback_button.configure(state=tk.DISABLED)
+        deep_loopback_button.configure(state=tk.DISABLED)
         refresh_audio_button.configure(state=tk.DISABLED)
         loopback_status.set("Capturing while Aurora audio is transmitted...")
         session_log.record(
@@ -686,6 +761,244 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             daemon=True,
         ).start()
         root.after(100, poll_loopback)
+
+    def start_deep_audio_loopback() -> None:
+        nonlocal loopback_running
+        if loopback_running or continuous_stream is not None:
+            return
+        try:
+            selected_input = input_devices[input_device_name.get()]
+            selected_output = output_devices[output_device_name.get()]
+            payload = message.get().strip().encode("utf-8")
+            if len(payload) != 20:
+                raise ValueError(
+                    "Deep research message must contain exactly 20 UTF-8 bytes"
+                )
+        except (KeyError, ValueError) as error:
+            loopback_status.set(f"Deep loopback cannot start: {error}")
+            return
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        capture_path = (
+            settings.log_directory / f"aurora_loopback_deep_{timestamp}.wav"
+        )
+        loopback_running = True
+        loopback_button.configure(state=tk.DISABLED)
+        deep_loopback_button.configure(state=tk.DISABLED)
+        refresh_audio_button.configure(state=tk.DISABLED)
+        loopback_status.set("Deep research frame playing and capturing...")
+        session_log.record(
+            "DEEP_AUDIO_LOOPBACK_START",
+            input_device=input_device_name.get(),
+            output_device=output_device_name.get(),
+            payload_length=len(payload),
+            capture_path=str(capture_path),
+            over_the_air_protocol=False,
+            radio_control=False,
+        )
+
+        def worker() -> None:
+            try:
+                loopback_results.put(
+                    run_deep_audio_loopback(
+                        payload,
+                        input_device=selected_input.index,
+                        output_device=selected_output.index,
+                        capture_path=capture_path,
+                    )
+                )
+            except Exception as error:
+                loopback_results.put(error)
+
+        threading.Thread(
+            target=worker,
+            name="AuroraDeepAudioLoopback",
+            daemon=True,
+        ).start()
+        root.after(100, poll_loopback)
+
+    def poll_continuous_events() -> None:
+        if continuous_stream is None:
+            return
+        try:
+            while True:
+                outcome = continuous_events.get_nowait()
+                if isinstance(outcome, Exception):
+                    _append_history(
+                        history,
+                        f"[CONTINUOUS RX ERROR] {outcome}",
+                        "error",
+                    )
+                    session_log.record(
+                        "CONTINUOUS_RX_ERROR",
+                        error_type=type(outcome).__name__,
+                        error=str(outcome),
+                    )
+                    stop_continuous_rx()
+                    return
+                received_text = outcome.payload.decode("utf-8")
+                success = received_text == continuous_expected_text
+                _append_history(
+                    history,
+                    f"[CONTINUOUS RX/CRC PASS] {received_text}",
+                    "rx" if success else "error",
+                )
+                receiver_state = continuous_receiver.diagnostics
+                loopback_status.set(
+                    f"Continuous RX: {receiver_state.decoded_frames} decoded, "
+                    f"{receiver_state.failed_windows} failed windows, "
+                    f"{receiver_state.discontinuities} discontinuities"
+                )
+                session_log.record(
+                    "CONTINUOUS_RX_RESULT",
+                    success=success,
+                    received_text=received_text,
+                    sync_metric=round(outcome.diagnostics.sync_metric, 6),
+                    frequency_offset_hz=round(
+                        outcome.diagnostics.frequency_offset_hz,
+                        6,
+                    ),
+                    timing_sample=outcome.diagnostics.symbol_start_sample,
+                    **asdict(receiver_state),
+                )
+        except queue.Empty:
+            pass
+        root.after(100, poll_continuous_events)
+
+    def start_continuous_rx() -> None:
+        nonlocal continuous_stream, continuous_receiver
+        nonlocal continuous_expected_text
+        if continuous_stream is not None:
+            stop_continuous_rx()
+            return
+        try:
+            selected_input = input_devices[input_device_name.get()]
+            selected_message = message.get().strip()
+            if not selected_message:
+                raise ValueError("Enter a continuous receive test message")
+            transmission = encode_payload(
+                selected_message.encode("utf-8"),
+                modulation=AURORA_ROBUST_MODE.modulation,
+                interleaver_columns=AURORA_ROBUST_MODE.interleaver_columns,
+            )
+            continuous_receiver = ContinuousAudioReceiver(
+                ContinuousReceiverConfig(len(transmission.symbols))
+            )
+            continuous_expected_text = selected_message
+            continuous_stop.clear()
+            while not continuous_blocks.empty():
+                continuous_blocks.get_nowait()
+            continuous_stream = AudioInputStream(
+                continuous_blocks.put,
+                settings=settings,
+                device=selected_input.index,
+            )
+            continuous_stream.start()
+        except Exception as error:
+            continuous_stream = None
+            continuous_receiver = None
+            loopback_status.set(f"Continuous RX cannot start: {error}")
+            return
+
+        def worker() -> None:
+            while not continuous_stop.is_set():
+                try:
+                    block = continuous_blocks.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                try:
+                    events = continuous_receiver.feed(block)
+                    for event in events:
+                        continuous_events.put(event)
+                except Exception as error:
+                    continuous_events.put(error)
+                    return
+
+        threading.Thread(
+            target=worker,
+            name="AuroraContinuousReceiver",
+            daemon=True,
+        ).start()
+        continuous_rx_button.configure(text="STOP CONTINUOUS RX")
+        continuous_send_button.configure(state=tk.NORMAL)
+        loopback_button.configure(state=tk.DISABLED)
+        deep_loopback_button.configure(state=tk.DISABLED)
+        refresh_audio_button.configure(state=tk.DISABLED)
+        loopback_status.set(
+            f"Continuous RX listening for {len(transmission.symbols)} symbols"
+        )
+        session_log.record(
+            "CONTINUOUS_RX_START",
+            input_device=input_device_name.get(),
+            expected_message_length=len(selected_message),
+            payload_symbol_count=len(transmission.symbols),
+            fixed_geometry=True,
+            radio_control=False,
+        )
+        root.after(100, poll_continuous_events)
+
+    def stop_continuous_rx() -> None:
+        nonlocal continuous_stream, continuous_receiver
+        if continuous_stream is None:
+            return
+        continuous_stop.set()
+        continuous_stream.stop()
+        continuous_stream.close()
+        continuous_stream = None
+        state = (
+            continuous_receiver.diagnostics
+            if continuous_receiver is not None
+            else None
+        )
+        continuous_receiver = None
+        stop_playback()
+        continuous_rx_button.configure(text="START CONTINUOUS RX")
+        continuous_send_button.configure(state=tk.DISABLED)
+        loopback_button.configure(state=tk.NORMAL)
+        deep_loopback_button.configure(state=tk.NORMAL)
+        refresh_audio_button.configure(state=tk.NORMAL)
+        loopback_status.set("Continuous RX stopped")
+        session_log.record(
+            "CONTINUOUS_RX_STOP",
+            diagnostics=None if state is None else asdict(state),
+        )
+
+    def send_to_continuous_rx() -> None:
+        if continuous_stream is None:
+            return
+        try:
+            selected_output = output_devices[output_device_name.get()]
+            selected_message = message.get().strip()
+            if selected_message != continuous_expected_text:
+                raise ValueError(
+                    "Message changed; restart continuous RX for the new geometry"
+                )
+            transmission = encode_payload(
+                selected_message.encode("utf-8"),
+                modulation=AURORA_ROBUST_MODE.modulation,
+                interleaver_columns=AURORA_ROBUST_MODE.interleaver_columns,
+            )
+            waveform = modulate_audio(
+                transmission.symbols,
+                leading_silence_samples=settings.audio_sample_rate,
+            )
+            audio = AudioBuffer(
+                np.asarray(waveform.samples, dtype=np.float32) * 0.75,
+                waveform.sample_rate,
+            )
+            play_audio(audio, device=selected_output.index)
+            _append_history(
+                history,
+                f"[CONTINUOUS TX] {selected_message}",
+                "tx",
+            )
+            session_log.record(
+                "CONTINUOUS_TX",
+                output_device=output_device_name.get(),
+                message_length=len(selected_message),
+                output_gain=0.75,
+            )
+        except Exception as error:
+            loopback_status.set(f"Continuous TX failed: {error}")
 
     def apply_preset(event: object | None = None) -> None:
         del event
@@ -1039,6 +1352,8 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             root.after_cancel(animation_job)
         if benchmark_job is not None:
             root.after_cancel(benchmark_job)
+        if continuous_stream is not None:
+            stop_continuous_rx()
         session_log.close()
         root.destroy()
 
@@ -1053,6 +1368,9 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     cancel_sweep_button.configure(command=cancel_robustness_sweep)
     refresh_audio_button.configure(command=refresh_audio_devices)
     loopback_button.configure(command=start_audio_loopback)
+    deep_loopback_button.configure(command=start_deep_audio_loopback)
+    continuous_rx_button.configure(command=start_continuous_rx)
+    continuous_send_button.configure(command=send_to_continuous_rx)
     input_device_box.bind("<<ComboboxSelected>>", input_device_changed)
     preset_box.bind("<<ComboboxSelected>>", apply_preset)
     entry.bind("<Return>", lambda event: run_local_test())

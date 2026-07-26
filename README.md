@@ -27,7 +27,14 @@ weak-signal operation under real-world HF propagation conditions.
 - Completed 10,000 matched-path, two-observation noise-only trials with zero
   false decodes. The 95% Wilson upper bound is approximately 0.0384% for that
   offline Gaussian-noise model.
-- Expanded the automated regression suite to 165 tests.
+- Expanded the automated regression suite to 175 tests.
+- Added a bounded fixed-geometry continuous audio receiver with arbitrary block
+  handling, CRC-confirmed events, discontinuity counters, and UI controls.
+- Passed the first persistent-stream VB-CABLE frame and the first provisional
+  Deep research audio loopback frame.
+- Added seeded narrowband-tone and correlated colored-noise channel models. A
+  strong combined-interference screen delivered 94/100 Deep frames at the
+  provisional -24 dB point and 0/300 matched noise/interference false decodes.
 
 These are development results, not an over-the-air protocol, sensitivity
 guarantee, or operational false-decode claim. Physical sound-device,

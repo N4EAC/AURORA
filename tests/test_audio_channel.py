@@ -46,6 +46,30 @@ class AudioChannelTests(unittest.TestCase):
         self.assertTrue(np.array_equal(first.samples, second.samples))
         self.assertFalse(np.array_equal(first.samples, self.audio.samples))
 
+    def test_tone_and_colored_noise_are_seeded_and_change_audio(self) -> None:
+        source = AudioBuffer(np.zeros(4_096, dtype=np.float32), 12_000)
+        config = AudioChannelConfig(
+            interference_tone_hz=1_650.0,
+            interference_tone_amplitude=0.1,
+            colored_noise_amplitude=0.02,
+        )
+        first = apply_audio_channel(source, config, np.random.default_rng(71))
+        second = apply_audio_channel(source, config, np.random.default_rng(71))
+        np.testing.assert_array_equal(first.samples, second.samples)
+        self.assertGreater(float(np.max(np.abs(first.samples))), 0.1)
+
+    def test_interference_tone_must_be_below_nyquist(self) -> None:
+        source = AudioBuffer(np.zeros(128, dtype=np.float32), 12_000)
+        with self.assertRaisesRegex(ValueError, "Nyquist"):
+            apply_audio_channel(
+                source,
+                AudioChannelConfig(
+                    interference_tone_hz=6_000.0,
+                    interference_tone_amplitude=0.1,
+                ),
+                np.random.default_rng(1),
+            )
+
     def test_reference_bandwidth_noise_calibration(self) -> None:
         variance = reference_noise_variance(1.0, 0.0, 12_000, 2_500.0)
         self.assertAlmostEqual(variance, 2.4)

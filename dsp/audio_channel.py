@@ -25,6 +25,10 @@ class AudioChannelConfig:
     fading_cycles_per_frame: float = 0.0
     impulse_probability: float = 0.0
     impulse_scale: float = 0.0
+    interference_tone_hz: float = 0.0
+    interference_tone_amplitude: float = 0.0
+    colored_noise_amplitude: float = 0.0
+    colored_noise_correlation: float = 0.95
 
     def __post_init__(self) -> None:
         if self.reference_bandwidth_hz <= 0.0:
@@ -51,6 +55,18 @@ class AudioChannelConfig:
             raise ValueError("Impulse probability must be between zero and one")
         if self.impulse_scale < 0.0:
             raise ValueError("Impulse scale must not be negative")
+        if self.interference_tone_hz < 0.0:
+            raise ValueError("Interference tone frequency must not be negative")
+        if self.interference_tone_amplitude < 0.0:
+            raise ValueError("Interference tone amplitude must not be negative")
+        if self.interference_tone_amplitude > 0.0 and self.interference_tone_hz == 0.0:
+            raise ValueError("Active interference tone requires a frequency")
+        if self.colored_noise_amplitude < 0.0:
+            raise ValueError("Colored-noise amplitude must not be negative")
+        if not 0.0 <= self.colored_noise_correlation < 1.0:
+            raise ValueError(
+                "Colored-noise correlation must be between zero and one"
+            )
 
 
 def _fractional_delay(samples: np.ndarray, delay: float) -> np.ndarray:
@@ -129,6 +145,35 @@ def _add_impulses(
     return result
 
 
+def _add_interference_tone(
+    samples: np.ndarray,
+    sample_rate: int,
+    frequency_hz: float,
+    amplitude: float,
+    random: np.random.Generator,
+) -> np.ndarray:
+    if amplitude == 0.0:
+        return samples.copy()
+    phase = random.uniform(0.0, 2.0 * math.pi)
+    time = np.arange(len(samples), dtype=np.float64) / sample_rate
+    return samples + amplitude * np.sin(2.0 * math.pi * frequency_hz * time + phase)
+
+
+def _add_colored_noise(
+    samples: np.ndarray,
+    amplitude: float,
+    correlation: float,
+    random: np.random.Generator,
+) -> np.ndarray:
+    if amplitude == 0.0:
+        return samples.copy()
+    white = random.normal(0.0, 1.0, len(samples) + 63)
+    kernel = correlation ** np.arange(64, dtype=np.float64)
+    kernel /= math.sqrt(float(np.sum(kernel * kernel)))
+    colored = np.convolve(white, kernel, mode="valid")
+    return samples + amplitude * colored
+
+
 def reference_noise_variance(
     signal_power: float,
     snr_db: float,
@@ -154,6 +199,8 @@ def apply_audio_channel(
         raise ValueError("Offline audio channel requires mono samples")
     if config.reference_bandwidth_hz > audio.sample_rate / 2.0:
         raise ValueError("Reference bandwidth exceeds audio Nyquist")
+    if config.interference_tone_hz >= audio.sample_rate / 2.0:
+        raise ValueError("Interference tone must be below audio Nyquist")
 
     working = np.asarray(audio.samples, dtype=np.float64) * config.amplitude_scale
     working = _fractional_delay(working, config.timing_offset_samples)
@@ -177,6 +224,19 @@ def apply_audio_channel(
         working,
         config.impulse_probability,
         config.impulse_scale,
+        random,
+    )
+    working = _add_interference_tone(
+        working,
+        audio.sample_rate,
+        config.interference_tone_hz,
+        config.interference_tone_amplitude,
+        random,
+    )
+    working = _add_colored_noise(
+        working,
+        config.colored_noise_amplitude,
+        config.colored_noise_correlation,
         random,
     )
     if config.snr_db is not None:
