@@ -14,7 +14,12 @@ from audio.device import (
     preferred_loopback_pair,
 )
 from audio.playback import play_audio, stop_playback
-from audio.streaming import AudioDuplexStream, AudioInputStream, AudioOutputStream
+from audio.streaming import (
+    AudioDuplexStream,
+    AudioInputStream,
+    AudioOutputStream,
+    AudioStreamStatus,
+)
 from audio.wav import read_wav, write_wav
 
 __all__ = [
@@ -27,6 +32,7 @@ __all__ = [
     "AudioDuplexStream",
     "AudioInputStream",
     "AudioOutputStream",
+    "AudioStreamStatus",
     "list_audio_devices",
     "compatible_outputs",
     "preferred_loopback_pair",

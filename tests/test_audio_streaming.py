@@ -6,7 +6,26 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from audio.buffer import AudioBuffer
-from audio.streaming import AudioDuplexStream, AudioInputStream, AudioOutputStream
+from audio.streaming import (
+    AudioDuplexStream,
+    AudioInputStream,
+    AudioOutputStream,
+    AudioStreamStatus,
+)
+
+
+class _InputOverflowStatus:
+    input_overflow = True
+    input_underflow = False
+    output_overflow = False
+    output_underflow = False
+    priming_output = False
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __str__(self) -> str:
+        return "input overflow"
 
 
 class AudioStreamingTests(unittest.TestCase):
@@ -30,6 +49,35 @@ class AudioStreamingTests(unittest.TestCase):
         backend.start.assert_called_once_with()
         backend.stop.assert_called_once_with()
         backend.close.assert_called_once_with()
+
+    @patch("audio.streaming.sd.InputStream")
+    def test_input_stream_propagates_normalized_status_before_audio(
+        self,
+        stream_type,
+    ) -> None:
+        stream_type.return_value = MagicMock(active=False)
+        order: list[str] = []
+        statuses: list[AudioStreamStatus] = []
+
+        def receive_status(status: AudioStreamStatus) -> None:
+            order.append("status")
+            statuses.append(status)
+
+        def receive_audio(audio: AudioBuffer) -> None:
+            order.append("audio")
+
+        AudioInputStream(receive_audio, status_consumer=receive_status)
+        callback = stream_type.call_args.kwargs["callback"]
+        callback(
+            np.zeros((4, 1), dtype=np.float32),
+            4,
+            None,
+            _InputOverflowStatus(),
+        )
+
+        self.assertEqual(order, ["status", "audio"])
+        self.assertTrue(statuses[0].input_discontinuity)
+        self.assertEqual(statuses[0].description, "input overflow")
 
     @patch("audio.streaming.sd.OutputStream")
     def test_output_stream_zero_pads_short_blocks(self, stream_type) -> None:

@@ -1,6 +1,7 @@
 """Managed real-time audio streams for Aurora."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 from typing import Any
 
@@ -13,8 +14,39 @@ from config import AppSettings, SETTINGS
 
 
 InputConsumer = Callable[[AudioBuffer], None]
+InputStatusConsumer = Callable[["AudioStreamStatus"], None]
 OutputProducer = Callable[[int], AudioBuffer | NDArray[np.float32]]
 DuplexProcessor = Callable[[AudioBuffer], AudioBuffer | NDArray[np.float32]]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioStreamStatus:
+    """Normalized PortAudio callback status relevant to stream recovery."""
+
+    input_overflow: bool
+    input_underflow: bool
+    output_overflow: bool
+    output_underflow: bool
+    priming_output: bool
+    description: str
+
+    @property
+    def input_discontinuity(self) -> bool:
+        """Return whether captured input continuity can no longer be trusted."""
+        return self.input_overflow or self.input_underflow
+
+
+def _normalize_status(status: Any) -> AudioStreamStatus | None:
+    if not status:
+        return None
+    return AudioStreamStatus(
+        input_overflow=bool(getattr(status, "input_overflow", False)),
+        input_underflow=bool(getattr(status, "input_underflow", False)),
+        output_overflow=bool(getattr(status, "output_overflow", False)),
+        output_underflow=bool(getattr(status, "output_underflow", False)),
+        priming_output=bool(getattr(status, "priming_output", False)),
+        description=str(status),
+    )
 
 
 def _report_status(status: Any) -> None:
@@ -78,10 +110,14 @@ class AudioInputStream(_ManagedStream):
         *,
         settings: AppSettings = SETTINGS,
         device: int | str | None = None,
+        status_consumer: InputStatusConsumer | None = None,
     ) -> None:
         def callback(indata: NDArray[np.float32], frames: int, time: Any, status: Any) -> None:
             del frames, time
             _report_status(status)
+            normalized_status = _normalize_status(status)
+            if normalized_status is not None and status_consumer is not None:
+                status_consumer(normalized_status)
             consumer(AudioBuffer(indata.copy(), settings.audio_sample_rate))
 
         stream = sd.InputStream(

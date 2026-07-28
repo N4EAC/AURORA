@@ -27,7 +27,7 @@ from audio.loopback import (
     run_deep_audio_loopback,
 )
 from audio.playback import play_audio, stop_playback
-from audio.streaming import AudioInputStream
+from audio.streaming import AudioInputStream, AudioStreamStatus
 from config import AppSettings, SETTINGS
 from dsp.core import encode_payload
 from dsp.spectrum import compute_spectrum
@@ -469,7 +469,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     continuous_stream: AudioInputStream | None = None
     continuous_receiver: ContinuousAudioReceiver | None = None
     continuous_stop = threading.Event()
-    continuous_blocks: queue.Queue[AudioBuffer] = queue.Queue()
+    continuous_blocks: queue.Queue[AudioBuffer | AudioStreamStatus] = queue.Queue()
     continuous_events: queue.Queue[object] = queue.Queue()
     continuous_expected_text = ""
     sweep_cancel = threading.Event()
@@ -858,6 +858,8 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                         6,
                     ),
                     timing_sample=outcome.diagnostics.symbol_start_sample,
+                    recovery=outcome.recovery,
+                    repair_symbol=outcome.repair_symbol,
                     **asdict(receiver_state),
                 )
         except queue.Empty:
@@ -891,6 +893,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 continuous_blocks.put,
                 settings=settings,
                 device=selected_input.index,
+                status_consumer=continuous_blocks.put,
             )
             continuous_stream.start()
         except Exception as error:
@@ -900,13 +903,26 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             return
 
         def worker() -> None:
+            pending_discontinuity = False
             while not continuous_stop.is_set():
                 try:
-                    block = continuous_blocks.get(timeout=0.2)
+                    item = continuous_blocks.get(timeout=0.2)
                 except queue.Empty:
                     continue
                 try:
-                    events = continuous_receiver.feed(block)
+                    if isinstance(item, AudioStreamStatus):
+                        if item.input_discontinuity:
+                            pending_discontinuity = True
+                        session_log.record(
+                            "CONTINUOUS_RX_STREAM_STATUS",
+                            **asdict(item),
+                        )
+                        continue
+                    events = continuous_receiver.feed(
+                        item,
+                        discontinuity=pending_discontinuity,
+                    )
+                    pending_discontinuity = False
                     for event in events:
                         continuous_events.put(event)
                 except Exception as error:

@@ -263,3 +263,28 @@ impulses. At the provisional -24 dB point, a promoted strong combined profile
 delivered 94/100 frames with no acquisition failures and six CRC failures.
 Matched interference/noise-only testing produced zero false decodes in 300
 trials. This sample is informative but too small for an operational claim.
+
+## Continuous receiver stream hardening
+
+On July 27, 2026, Aurora began propagating normalized PortAudio input overflow
+and underflow status into the continuous receiver. A confirmed input
+discontinuity now discards partial frame state before processing the associated
+audio block, and the event is retained in the structured session log.
+
+Successful decoding now consumes only the recovered frame. Trailing samples
+remain buffered, and multiple complete CRC-confirmed frames can be emitted from
+one input block. Deterministic tests cover callback-status ordering,
+discontinuity recovery, and two-frame delivery.
+
+The published `A085` failure capture was found to contain an approximately
+108-sample loss near payload symbol 46. At the 1.5 kHz carrier this also
+produced a persistent 180-degree BPSK phase inversion. A bounded fallback now
+tests coarse single-inversion boundaries only after normal decode failure and
+accepts only CRC-valid frames. It recovers `A085`; an initial 100-trial matched
+noise screen produced zero false decodes. The complete automated suite passes
+178 tests.
+
+General blind repair of arbitrary samples lost or duplicated inside a frame is
+not implemented. A larger repair-enabled noise campaign and another real-audio
+reliability run are required before promoting this fallback beyond development
+status.

@@ -1,10 +1,12 @@
 """Tests for bounded continuous Aurora audio reception."""
 
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 from audio.buffer import AudioBuffer
+from audio.wav import read_wav
 from audio.continuous_receiver import (
     ContinuousAudioReceiver,
     ContinuousReceiverConfig,
@@ -66,6 +68,41 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
         self.assertEqual(receiver.diagnostics.discontinuities, 1)
         self.assertGreater(receiver.diagnostics.dropped_samples, 0)
 
+    def test_two_frames_in_one_block_are_both_recovered(self) -> None:
+        waveform, symbol_count = _test_waveform(b"double")
+        receiver = ContinuousAudioReceiver(
+            ContinuousReceiverConfig(symbol_count)
+        )
+        combined = AudioBuffer(
+            np.concatenate((waveform.samples, waveform.samples)),
+            waveform.sample_rate,
+        )
+
+        events = receiver.feed(combined)
+
+        self.assertEqual(
+            [event.payload for event in events],
+            [b"double", b"double"],
+        )
+        self.assertEqual(receiver.diagnostics.decoded_frames, 2)
+        self.assertEqual(receiver.diagnostics.buffered_samples, 0)
+
+    def test_recorded_phase_discontinuity_is_crc_repaired(self) -> None:
+        _, symbol_count = _test_waveform(b"A085")
+        receiver = ContinuousAudioReceiver(
+            ContinuousReceiverConfig(symbol_count)
+        )
+        capture = read_wav(
+            Path("tests/fixtures/audio/a085_transient_failure.wav")
+        )
+
+        events = receiver.feed(capture)
+
+        self.assertEqual([event.payload for event in events], [b"A085"])
+        self.assertEqual(events[0].recovery, "phase_inversion")
+        self.assertIsNotNone(events[0].repair_symbol)
+        self.assertEqual(receiver.diagnostics.phase_repairs, 1)
+
     def test_noise_buffer_remains_bounded(self) -> None:
         _, symbol_count = _test_waveform(b"bounded")
         config = ContinuousReceiverConfig(
@@ -89,7 +126,7 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
     def test_corrupted_frame_is_skipped_before_valid_frame(self) -> None:
         waveform, symbol_count = _test_waveform(b"recover")
         corrupted = np.asarray(waveform.samples).copy()
-        corrupted[len(corrupted) // 3 : len(corrupted) // 2] = 0.0
+        corrupted.fill(0.0)
         combined = np.concatenate(
             (
                 corrupted,
