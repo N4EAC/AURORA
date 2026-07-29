@@ -31,6 +31,32 @@ def _test_waveform(message: bytes, leading: int = 731) -> tuple[AudioBuffer, int
     )
 
 
+def _disrupt_waveform(
+    waveform: AudioBuffer,
+    *,
+    sample: int,
+    sample_count: int,
+    duplicate: bool,
+) -> AudioBuffer:
+    if duplicate:
+        samples = np.concatenate(
+            (
+                waveform.samples[:sample],
+                waveform.samples[sample - sample_count : sample],
+                waveform.samples[sample:],
+            )
+        )
+    else:
+        samples = np.concatenate(
+            (
+                waveform.samples[:sample],
+                waveform.samples[sample + sample_count :],
+                np.zeros(sample_count, dtype=np.float32),
+            )
+        )
+    return AudioBuffer(samples, waveform.sample_rate)
+
+
 class ContinuousAudioReceiverTests(unittest.TestCase):
     def test_arbitrary_blocks_recover_one_crc_confirmed_frame(self) -> None:
         waveform, symbol_count = _test_waveform(b"stream")
@@ -102,6 +128,43 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
         self.assertEqual(events[0].recovery, "phase_inversion")
         self.assertIsNotNone(events[0].repair_symbol)
         self.assertEqual(receiver.diagnostics.phase_repairs, 1)
+
+    def test_mid_frame_sample_loss_is_crc_repaired(self) -> None:
+        waveform, symbol_count = _test_waveform(b"sample loss")
+        receiver = ContinuousAudioReceiver(
+            ContinuousReceiverConfig(symbol_count)
+        )
+        disrupted = _disrupt_waveform(
+            waveform,
+            sample=waveform.frame_count // 2,
+            sample_count=108,
+            duplicate=False,
+        )
+
+        events = receiver.feed(disrupted)
+
+        self.assertEqual([event.payload for event in events], [b"sample loss"])
+        self.assertEqual(events[0].recovery, "phase_inversion")
+
+    def test_mid_frame_sample_duplication_is_crc_repaired(self) -> None:
+        waveform, symbol_count = _test_waveform(b"sample duplicate")
+        receiver = ContinuousAudioReceiver(
+            ContinuousReceiverConfig(symbol_count)
+        )
+        disrupted = _disrupt_waveform(
+            waveform,
+            sample=waveform.frame_count // 2,
+            sample_count=108,
+            duplicate=True,
+        )
+
+        events = receiver.feed(disrupted)
+
+        self.assertEqual(
+            [event.payload for event in events],
+            [b"sample duplicate"],
+        )
+        self.assertEqual(events[0].recovery, "phase_inversion")
 
     def test_noise_buffer_remains_bounded(self) -> None:
         _, symbol_count = _test_waveform(b"bounded")

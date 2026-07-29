@@ -9,7 +9,7 @@
 Aurora is a new digital-modem research project exploring reliable,
 weak-signal communication under real-world HF propagation conditions.
 
-## UPDATES — July 28, 2026 18:59 UTC
+## UPDATES — July 29, 2026 12:58 UTC
 
 - Propagated PortAudio callback overflow and underflow status into the
   continuous receiver so partial state is discarded after a confirmed input
@@ -18,8 +18,10 @@ weak-signal communication under real-world HF propagation conditions.
   multiple complete frames in one input block to be recovered.
 - Added a bounded, CRC-gated BPSK phase-inversion fallback that recovers the
   published `A085` transient-failure capture.
-- Completed an initial 100-trial matched continuous-receiver noise screen with
-  zero false decodes. This is a development check, not an operational claim.
+- Added a deterministic, resumable, parallel continuous-receiver validation
+  command and completed 10,000 matched noise-only trials with zero false
+  decodes. The 95% Wilson upper bound is approximately 0.0384%; this is not an
+  operational claim.
 - Added a real-time, audio-only loopback workflow to the Tkinter interface.
   Aurora can simultaneously play a waveform, capture the routed input, decode
   the message, validate its CRC, and retain WAV and structured session
@@ -40,7 +42,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Completed 10,000 matched-path, two-observation noise-only trials with zero
   false decodes. The 95% Wilson upper bound is approximately 0.0384% for that
   offline Gaussian-noise model.
-- Expanded the automated regression suite to 178 tests.
+- Expanded the automated regression suite to 183 tests.
 - Added a bounded fixed-geometry continuous audio receiver with arbitrary block
   handling, CRC-confirmed events, discontinuity counters, and UI controls.
 - Passed the first persistent-stream VB-CABLE frame and the first provisional

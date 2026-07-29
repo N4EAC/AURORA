@@ -10,3 +10,5 @@ __pycache__/
 # configuration, documentation, and deliberate test fixtures under logs/ tracked.
 logs/*.log
 logs/aurora_loopback_*.wav
+logs/*.json
+logs/*.err

@@ -280,11 +280,19 @@ The published `A085` failure capture was found to contain an approximately
 108-sample loss near payload symbol 46. At the 1.5 kHz carrier this also
 produced a persistent 180-degree BPSK phase inversion. A bounded fallback now
 tests coarse single-inversion boundaries only after normal decode failure and
-accepts only CRC-valid frames. It recovers `A085`; an initial 100-trial matched
-noise screen produced zero false decodes. The complete automated suite passes
-178 tests.
+accepts only CRC-valid frames. It recovers `A085`.
+
+Synthetic testing recovered 14/15 sample-loss cases and 14/15 duplication
+cases across three mid-frame locations and five disruption lengths. Both
+failures were early half-symbol disruptions. Representative 108-sample loss
+and duplication cases are retained as automated regressions.
+
+The repair-enabled receiver completed 10,000 deterministic matched noise-only
+trials with zero false decodes. The 95% Wilson upper bound is approximately
+0.0384%. The first 1,000 trials completed in approximately 70.2 seconds; the
+resumable 9,000-trial continuation completed in approximately 621.4 seconds
+with 12 workers. The complete automated suite passes 183 tests.
 
 General blind repair of arbitrary samples lost or duplicated inside a frame is
-not implemented. A larger repair-enabled noise campaign and another real-audio
-reliability run are required before promoting this fallback beyond development
-status.
+not implemented. Another real-audio reliability run is required before
+promoting this fallback beyond development status.

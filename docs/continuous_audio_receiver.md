@@ -50,6 +50,7 @@ Deterministic tests cover:
 - PortAudio status normalization and propagation;
 - two complete frames delivered in one input block;
 - CRC-confirmed recovery of the published `A085` transient-failure WAV;
+- synthetic 108-sample mid-frame loss and duplication;
 - a corrupted frame followed by a valid frame;
 - invalid sample rates; and
 - clean audio-device callback separation.
@@ -57,9 +58,21 @@ Deterministic tests cover:
 A real VB-CABLE test decoded `CRX` with a 0.999904 synchronization metric,
 effectively zero frequency offset, and no failed windows, discontinuities, or
 dropped samples. Offline regression of the recorded transient failure now
-recovers `A085` with the bounded phase-inversion fallback. An initial 100-trial
-matched continuous-receiver noise screen produced zero false decodes; this is
-not large enough for an operational false-decode claim.
+recovers `A085` with the bounded phase-inversion fallback. A 10,000-trial
+matched continuous-receiver noise campaign produced zero false decodes, giving
+an approximately 0.0384% 95% Wilson upper bound. This is not an operational
+false-decode claim.
+
+The reproducible noise campaign can be run in deterministic, resumable batches:
+
+```powershell
+.\.venv\Scripts\python.exe -m modem.continuous_validation `
+  --trials 1000 --start-trial 0 --workers 12
+```
+
+The command emits one JSON result containing the completed range, false-decode
+count, runtime, worker count, and 95% Wilson interval. It does not open audio or
+radio hardware.
 
 ## Remaining work
 
@@ -67,6 +80,5 @@ not large enough for an operational false-decode claim.
   architecture stabilizes.
 - Add bounded timing recovery for discontinuities that are not adequately
   represented by a single BPSK phase inversion.
-- Run a larger matched noise-only campaign for the repair-enabled receiver.
 - Validate with a known physical sound-device cable route.
 - Repeat false-decode campaigns after any framing or acquisition change.
