@@ -6,6 +6,7 @@ from tkinter import ttk
 import numpy as np
 
 from dsp.spectrum import SpectrumFrame
+from gui.theme import PALETTE
 
 
 class SpectrumView(ttk.Frame):
@@ -24,10 +25,10 @@ class SpectrumView(ttk.Frame):
         self._frame: SpectrumFrame | None = None
         self.canvas = tk.Canvas(
             self,
-            background="#0b1015",
+            background=PALETTE.field,
             highlightthickness=1,
-            highlightbackground="#2a3540",
-            height=180,
+            highlightbackground=PALETTE.border,
+            height=120,
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", lambda event: self._draw())
@@ -51,5 +52,5 @@ class SpectrumView(ttk.Frame):
         y_values = (1.0 - normalized) * (height - 1.0)
         points = [coordinate for pair in zip(x_values, y_values) for coordinate in pair]
         self.canvas.create_line(
-            *points, fill="#52d6c7", width=1, tags="spectrum"
+            *points, fill=PALETTE.accent, width=1, tags="spectrum"
         )

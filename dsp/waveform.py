@@ -32,6 +32,8 @@ class WaveformResult:
 
 def samples_per_symbol(mode: ModeDefinition = AURORA_ROBUST_MODE) -> int:
     """Return the exact integer audio sampling ratio for a mode."""
+    if mode.waveform != "single_carrier":
+        raise ValueError("Samples per symbol applies only to single-carrier research")
     ratio = mode.audio_sample_rate / mode.symbol_rate
     if not ratio.is_integer():
         raise ValueError("Waveform requires an integer samples-per-symbol ratio")
@@ -95,7 +97,19 @@ def modulate_audio(
     leading_silence_samples: int = 0,
     frequency_offset_hz: float = 0.0,
 ) -> AudioBuffer:
-    """Pulse-shape BPSK payload symbols into real passband audio samples."""
+    """Create Aurora audio using the waveform selected by the mode."""
+    if mode.waveform == "ofdm":
+        from dsp.ofdm import OfdmConfig, modulate_ofdm_audio
+
+        return modulate_ofdm_audio(
+            payload_symbols,
+            OfdmConfig(
+                sample_rate=mode.audio_sample_rate,
+                audio_center_hz=mode.audio_carrier_hz,
+            ),
+            leading_silence_samples=leading_silence_samples,
+            frequency_offset_hz=frequency_offset_hz,
+        )
     payload = np.asarray(payload_symbols, dtype=np.complex128)
     if payload.ndim != 1 or len(payload) == 0:
         raise ValueError("Payload symbols must be a non-empty one-dimensional sequence")
@@ -160,7 +174,23 @@ def demodulate_audio(
     *,
     sync_threshold: float = 0.70,
 ) -> WaveformResult:
-    """Acquire and recover a known-length BPSK payload from offline audio."""
+    """Acquire and recover a known-length payload from Aurora audio."""
+    if mode.waveform == "ofdm":
+        from dsp.ofdm import OfdmConfig, demodulate_ofdm_audio
+
+        symbols, metric, offset, start = demodulate_ofdm_audio(
+            audio,
+            payload_symbol_count,
+            OfdmConfig(
+                sample_rate=mode.audio_sample_rate,
+                audio_center_hz=mode.audio_carrier_hz,
+            ),
+            sync_threshold=min(sync_threshold, 0.65),
+        )
+        return WaveformResult(
+            symbols,
+            WaveformDiagnostics(True, metric, offset, start),
+        )
     if audio.channel_count != 1:
         raise ValueError("Experimental waveform receiver requires mono audio")
     if audio.sample_rate != mode.audio_sample_rate:

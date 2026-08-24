@@ -42,6 +42,7 @@ from gui.testing_controller import (
     SweepConfig,
     TestingController,
 )
+from gui.theme import PALETTE, configure_theme
 from gui.waterfall_view import WaterfallView
 from modem import AURORA_ROBUST_MODE
 from waterfall.model import WaterfallModel
@@ -49,49 +50,6 @@ from util.session_debug_log import SessionDebugLog
 
 
 APPLICATION_VERSION = "0.1.0-dev"
-
-
-def _configure_styles(root: tk.Tk, settings: AppSettings) -> None:
-    style = ttk.Style(root)
-    style.configure("Aurora.TFrame", background=settings.background)
-    style.configure("Aurora.Panel.TFrame", background="#20262e")
-    style.configure(
-        "Aurora.Title.TLabel",
-        background=settings.background,
-        foreground=settings.foreground,
-        font=("Segoe UI", 22, "bold"),
-    )
-    style.configure(
-        "Aurora.Status.TLabel",
-        background=settings.background,
-        foreground=settings.muted_foreground,
-        font=("Segoe UI", 10),
-    )
-    style.configure(
-        "Aurora.Section.TLabel",
-        background="#20262e",
-        foreground=settings.foreground,
-        font=("Segoe UI", 10, "bold"),
-    )
-    style.configure(
-        "Aurora.Muted.TLabel",
-        background="#20262e",
-        foreground=settings.muted_foreground,
-        font=("Segoe UI", 9),
-    )
-    style.configure(
-        "Aurora.Value.TLabel",
-        background="#20262e",
-        foreground="#52d6c7",
-        font=("Consolas", 9, "bold"),
-    )
-    style.configure(
-        "Aurora.Warning.TLabel",
-        background="#392d17",
-        foreground="#ffc857",
-        padding=(10, 5),
-        font=("Segoe UI", 9, "bold"),
-    )
 
 
 def _append_history(history: tk.Text, line: str, tag: str = "info") -> None:
@@ -112,36 +70,70 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     root = tk.Tk()
     root.title(settings.window_title)
     root.geometry(settings.window_geometry)
-    root.minsize(900, 720)
+    root.minsize(settings.minimum_width, settings.minimum_height)
     root.configure(background=settings.background)
-    _configure_styles(root, settings)
+    configure_theme(root)
     session_log = SessionDebugLog(settings.log_directory, APPLICATION_VERSION)
 
     controller = TestingController(
         settings.audio_sample_rate, settings.audio_block_size
     )
-    content = ttk.Frame(root, padding=18, style="Aurora.TFrame")
+    content = ttk.Frame(root, padding=(12, 10), style="Aurora.TFrame")
     content.pack(fill=tk.BOTH, expand=True)
     content.columnconfigure(1, weight=1)
     content.rowconfigure(1, weight=1)
 
     header = ttk.Frame(content, style="Aurora.TFrame")
-    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-    ttk.Label(header, text="Aurora", style="Aurora.Title.TLabel").pack(side=tk.LEFT)
+    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+    identity = ttk.Frame(header, style="Aurora.TFrame")
+    identity.pack(side=tk.LEFT)
+    ttk.Label(identity, text="Aurora", style="Aurora.Title.TLabel").pack(
+        side=tk.LEFT
+    )
+    ttk.Label(
+        identity,
+        text="Adaptive HF communications",
+        style="Aurora.Subtitle.TLabel",
+    ).pack(side=tk.LEFT, padx=(12, 0), pady=(8, 0))
     ttk.Label(
         header,
-        text="AUDIO TEST - NO RADIO",
+        text="VIRTUAL MODE  •  NO RF",
         style="Aurora.Warning.TLabel",
     ).pack(side=tk.RIGHT)
 
-    sidebar = ttk.Frame(content, padding=14, style="Aurora.Panel.TFrame")
-    sidebar.grid(row=1, column=0, sticky="nsew", padx=(0, 14))
-    ttk.Label(sidebar, text="LOCAL TEST", style="Aurora.Section.TLabel").pack(
+    sidebar_host = ttk.Frame(content, style="Aurora.Surface.TFrame", width=246)
+    sidebar_host.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+    sidebar_host.grid_propagate(False)
+    sidebar_canvas = tk.Canvas(
+        sidebar_host,
+        width=228,
+        background=PALETTE.surface,
+        highlightthickness=0,
+    )
+    sidebar_scroll = ttk.Scrollbar(
+        sidebar_host, orient=tk.VERTICAL, command=sidebar_canvas.yview
+    )
+    sidebar_canvas.configure(yscrollcommand=sidebar_scroll.set)
+    sidebar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    sidebar_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    sidebar = ttk.Frame(sidebar_canvas, padding=12, style="Aurora.Panel.TFrame")
+    sidebar_window = sidebar_canvas.create_window(
+        (0, 0), window=sidebar, anchor=tk.NW
+    )
+    sidebar.bind(
+        "<Configure>",
+        lambda event: sidebar_canvas.configure(scrollregion=sidebar_canvas.bbox("all")),
+    )
+    sidebar_canvas.bind(
+        "<Configure>",
+        lambda event: sidebar_canvas.itemconfigure(sidebar_window, width=event.width),
+    )
+    ttk.Label(sidebar, text="SIGNAL WORKBENCH", style="Aurora.Section.TLabel").pack(
         anchor=tk.W
     )
     ttk.Label(
         sidebar,
-        text="Exercises Aurora framing, FEC, mapping, soft decoding, and CRC locally.",
+        text="Shape and measure Aurora OFDM signals without transmitting RF.",
         style="Aurora.Muted.TLabel",
         wraplength=215,
         justify=tk.LEFT,
@@ -223,12 +215,12 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     workspace = ttk.Frame(content, style="Aurora.TFrame")
     workspace.grid(row=1, column=1, sticky="nsew")
     workspace.columnconfigure(0, weight=1)
-    workspace.rowconfigure(1, weight=2)
-    workspace.rowconfigure(3, weight=2)
+    workspace.rowconfigure(1, weight=1)
+    workspace.rowconfigure(3, weight=1)
     workspace.rowconfigure(5, weight=1)
 
     ttk.Label(
-        workspace, text="SPECTRUM - SYNTHETIC INPUT", style="Aurora.Status.TLabel"
+        workspace, text="SIGNAL SPECTRUM", style="Aurora.Status.TLabel"
     ).grid(row=0, column=0, sticky="w", pady=(0, 4))
     spectrum = SpectrumView(
         workspace,
@@ -238,7 +230,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     spectrum.grid(row=1, column=0, sticky="nsew")
 
     ttk.Label(
-        workspace, text="WATERFALL - SYNTHETIC INPUT", style="Aurora.Status.TLabel"
+        workspace, text="SIGNAL HISTORY", style="Aurora.Status.TLabel"
     ).grid(row=2, column=0, sticky="w", pady=(10, 4))
     waterfall_model = WaterfallModel(
         settings.spectrum_fft_size // 2 + 1,
@@ -250,7 +242,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     waterfall.grid(row=3, column=0, sticky="nsew")
 
     ttk.Label(
-        workspace, text="LOCAL MESSAGE HISTORY", style="Aurora.Status.TLabel"
+        workspace, text="ACTIVITY", style="Aurora.Status.TLabel"
     ).grid(row=4, column=0, sticky="w", pady=(10, 4))
     result_tabs = ttk.Notebook(workspace)
     result_tabs.grid(row=5, column=0, sticky="nsew")
@@ -263,17 +255,17 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         history_tab,
         height=5,
         state=tk.DISABLED,
-        background="#0b1015",
+        background=PALETTE.field,
         foreground=settings.foreground,
         insertbackground=settings.foreground,
         relief=tk.FLAT,
         padx=8,
         pady=6,
-        font=("Consolas", 9),
+        font=("TkFixedFont", 9),
     )
-    history.tag_configure("tx", foreground="#58a6ff")
-    history.tag_configure("rx", foreground="#52d6c7")
-    history.tag_configure("error", foreground="#ff6b6b")
+    history.tag_configure("tx", foreground=PALETTE.blue)
+    history.tag_configure("rx", foreground=PALETTE.accent)
+    history.tag_configure("error", foreground=PALETTE.danger)
     history.pack(fill=tk.BOTH, expand=True)
 
     sweep_controls = ttk.Frame(benchmark_tab, padding=(4, 4))
@@ -396,19 +388,21 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     benchmark_tab.columnconfigure(0, weight=1)
     benchmark_tab.rowconfigure(2, weight=1)
 
-    composer = ttk.Frame(content, style="Aurora.TFrame")
-    composer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+    composer = ttk.Frame(content, padding=(12, 10), style="Aurora.Surface.TFrame")
+    composer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
     composer.columnconfigure(0, weight=1)
     message = tk.StringVar(value="CQ CQ from Aurora")
     entry = ttk.Entry(composer, textvariable=message)
     entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-    send_button = ttk.Button(composer, text="RUN LOCAL CODEC TEST")
+    send_button = ttk.Button(
+        composer, text="PROCESS MESSAGE", style="Aurora.Primary.TButton"
+    )
     send_button.grid(row=0, column=1)
 
-    loopback_controls = ttk.Frame(composer, style="Aurora.TFrame")
+    loopback_controls = ttk.Frame(composer, style="Aurora.Surface.TFrame")
     loopback_controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
     loopback_controls.columnconfigure(1, weight=1)
-    loopback_controls.columnconfigure(3, weight=1)
+    loopback_controls.columnconfigure(4, weight=1)
     input_device_name = tk.StringVar()
     output_device_name = tk.StringVar()
     loopback_status = tk.StringVar(value="Audio loopback idle")
@@ -422,23 +416,23 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         loopback_controls,
         textvariable=input_device_name,
         state="readonly",
-        width=28,
+        width=20,
     )
-    input_device_box.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    input_device_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(0, 10))
     ttk.Label(
         loopback_controls, text="Output", style="Aurora.Status.TLabel"
-    ).grid(row=0, column=2, padx=(0, 4))
+    ).grid(row=0, column=3, padx=(0, 4))
     output_device_box = ttk.Combobox(
         loopback_controls,
         textvariable=output_device_name,
         state="readonly",
-        width=28,
+        width=20,
     )
-    output_device_box.grid(row=0, column=3, sticky="ew", padx=(0, 8))
+    output_device_box.grid(row=0, column=4, columnspan=2, sticky="ew", padx=(0, 8))
     refresh_audio_button = ttk.Button(loopback_controls, text="REFRESH AUDIO")
-    refresh_audio_button.grid(row=0, column=4, padx=(0, 6))
+    refresh_audio_button.grid(row=0, column=6)
     loopback_button = ttk.Button(loopback_controls, text="RUN AUDIO LOOPBACK")
-    loopback_button.grid(row=0, column=5)
+    loopback_button.grid(row=1, column=3, pady=(6, 0), padx=(0, 6))
     continuous_rx_button = ttk.Button(
         loopback_controls, text="START CONTINUOUS RX"
     )
@@ -448,16 +442,16 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         text="SEND TO CONT RX",
         state=tk.DISABLED,
     )
-    continuous_send_button.grid(row=1, column=5, pady=(6, 0))
+    continuous_send_button.grid(row=1, column=5, pady=(6, 0), padx=(0, 6))
     deep_loopback_button = ttk.Button(
         loopback_controls, text="RUN DEEP LOOPBACK"
     )
-    deep_loopback_button.grid(row=1, column=3, pady=(6, 0), padx=(0, 6))
+    deep_loopback_button.grid(row=1, column=6, pady=(6, 0))
     ttk.Label(
         loopback_controls,
         textvariable=loopback_status,
         style="Aurora.Status.TLabel",
-    ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
+    ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
     simulation_running = False
     animation_job: str | None = None

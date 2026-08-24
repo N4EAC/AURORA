@@ -15,11 +15,11 @@ from dsp.waveform import (
     root_raised_cosine_taps,
     samples_per_symbol,
 )
-from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
+from modem.mode_definition import AURORA_SINGLE_CARRIER_RESEARCH_MODE, ModeDefinition
 
 
-DEEP_SAMPLE_RATE = AURORA_ROBUST_MODE.audio_sample_rate
-DEEP_SYMBOL_RATE = AURORA_ROBUST_MODE.symbol_rate
+DEEP_SAMPLE_RATE = AURORA_SINGLE_CARRIER_RESEARCH_MODE.audio_sample_rate
+DEEP_SYMBOL_RATE = AURORA_SINGLE_CARRIER_RESEARCH_MODE.symbol_rate
 DEEP_PILOT_INTERVAL = 128
 DEEP_PILOT_SYMBOL_COUNT = 16
 
@@ -111,7 +111,7 @@ def modulate_deep_audio(
     pilots_enabled: bool = True,
     pilot_interval: int = DEEP_PILOT_INTERVAL,
     pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
-    mode: ModeDefinition = AURORA_ROBUST_MODE,
+    mode: ModeDefinition = AURORA_SINGLE_CARRIER_RESEARCH_MODE,
 ) -> AudioBuffer:
     """Generate the provisional Deep research waveform without opening hardware."""
     symbols = bits_to_bpsk(bits)
@@ -270,7 +270,7 @@ def recover_deep_likelihoods(
     tracking_enabled: bool = True,
     pilot_interval: int = DEEP_PILOT_INTERVAL,
     pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
-    mode: ModeDefinition = AURORA_ROBUST_MODE,
+    mode: ModeDefinition = AURORA_SINGLE_CARRIER_RESEARCH_MODE,
 ) -> DeepWaveformResult:
     """Search clock hypotheses and return soft BPSK decisions."""
     if not clock_search_ppm:
@@ -580,7 +580,7 @@ def recover_deep_candidate_likelihoods(
     acquisition_diversity: bool = False,
     pilot_interval: int = DEEP_PILOT_INTERVAL,
     pilot_symbol_count: int = DEEP_PILOT_SYMBOL_COUNT,
-    mode: ModeDefinition = AURORA_ROBUST_MODE,
+    mode: ModeDefinition = AURORA_SINGLE_CARRIER_RESEARCH_MODE,
 ) -> tuple[DeepWaveformResult, ...]:
     """Return a bounded list ranked by coherent preamble-plus-pilot energy."""
     if min(

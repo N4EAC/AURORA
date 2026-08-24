@@ -11,6 +11,10 @@ weak-signal communication under real-world HF propagation conditions.
 
 ## UPDATES — July 29, 2026 12:58 UTC
 
+- Replaced Aurora's unreleased single-carrier primary waveform with a
+  provisional cyclic-prefix OFDM physical layer. The first definition uses a
+  256-point FFT, eight active subcarriers, repeated training, per-carrier
+  equalization, and less than 1 kHz occupied bandwidth.
 - Propagated PortAudio callback overflow and underflow status into the
   continuous receiver so partial state is discarded after a confirmed input
   discontinuity.
@@ -110,12 +114,12 @@ The initial bit-level DSP core provides:
 The generic bit-level core remains independent of waveform filtering and
 automatic gain control.
 
-The robust waveform path converts BPSK symbols into 12 kHz real-valued audio
-using root-raised-cosine pulse shaping and recovers them with preamble
-acquisition, matched filtering, and residual carrier-offset correction. It is
-used by offline studies, one-shot audio loopback, and fixed-geometry continuous
+The primary waveform maps protected constellation values across a provisional
+12 kHz cyclic-prefix OFDM signal. Repeated training blocks provide acquisition,
+residual carrier-offset measurement, and per-subcarrier equalization. It is
+used by offline tests, one-shot audio loopback, and fixed-geometry continuous
 receive tests. None of these paths controls a radio. See
-[the waveform experiment](docs/waveform_experiment.md).
+[the OFDM mode definition](docs/ofdm_mode_definition.md).
 
 The offline robustness harness adds deterministic real-audio AWGN, timing
 displacement, sample-clock error, multipath, fading, impulsive noise, and level

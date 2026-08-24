@@ -11,16 +11,15 @@ class ModeDefinitionTests(unittest.TestCase):
     def test_robust_mode_selects_documented_parameters(self) -> None:
         mode = AURORA_ROBUST_MODE
         self.assertEqual(mode.modulation, "bpsk")
-        self.assertEqual(mode.symbol_rate, 31.25)
+        self.assertEqual(mode.symbol_rate, 300.0)
         self.assertEqual((mode.fec_rate_numerator, mode.fec_rate_denominator), (1, 2))
         self.assertTrue(mode.fec_terminated)
-        self.assertEqual(mode.interleaver_columns, 16)
+        self.assertEqual(mode.interleaver_columns, 8)
         self.assertFalse(mode.interleaver_geometry_signaled)
         self.assertEqual(mode.audio_sample_rate, 12_000)
         self.assertEqual(mode.audio_carrier_hz, 1_500.0)
-        self.assertEqual(mode.pulse_shape, "root_raised_cosine")
-        self.assertEqual(mode.pulse_rolloff, 0.35)
-        self.assertEqual(mode.pulse_span_symbols, 8)
+        self.assertEqual(mode.pulse_shape, "ofdm")
+        self.assertEqual(mode.waveform, "ofdm")
 
     def test_mode_fec_selection_matches_dsp_implementation(self) -> None:
         self.assertEqual(AURORA_ROBUST_MODE.fec_constraint_length, CONSTRAINT_LENGTH)

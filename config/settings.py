@@ -12,12 +12,12 @@ class AppSettings:
     """Values controlling the Aurora desktop application."""
 
     window_title: str = "Aurora"
-    window_geometry: str = "900x600"
-    minimum_width: int = 640
-    minimum_height: int = 420
-    background: str = "#15191f"
-    foreground: str = "#e8edf2"
-    muted_foreground: str = "#9ca8b5"
+    window_geometry: str = "1100x700"
+    minimum_width: int = 780
+    minimum_height: int = 520
+    background: str = "#0b1016"
+    foreground: str = "#eef5f7"
+    muted_foreground: str = "#8fa2b3"
     log_level: str = "INFO"
     log_directory: Path = PROJECT_ROOT / "logs"
     log_filename: str = "aurora.log"

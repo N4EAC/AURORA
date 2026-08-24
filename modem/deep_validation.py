@@ -32,7 +32,7 @@ from modem.deep_mode_study import (
     DeepChannelProfile,
     REFERENCE_PAYLOAD,
 )
-from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
+from modem.mode_definition import AURORA_SINGLE_CARRIER_RESEARCH_MODE, ModeDefinition
 
 
 EventCallback = Callable[[str, dict[str, object]], None]
@@ -75,7 +75,7 @@ class DeepValidationConfig:
     acquisition_diversity_coherent_threshold: float = 1.0
     pilot_interval: int = 128
     pilot_symbol_count: int = 16
-    mode: ModeDefinition = AURORA_ROBUST_MODE
+    mode: ModeDefinition = AURORA_SINGLE_CARRIER_RESEARCH_MODE
     soft_observation_count: int = 1
     acquisition_phase_step_samples: int = 1
 

@@ -25,11 +25,12 @@ class ModeDefinition:
     pulse_shape: str
     pulse_rolloff: float
     pulse_span_symbols: int
+    waveform: str = "single_carrier"
     interleaver_geometry_signaled: bool = False
 
     def __post_init__(self) -> None:
-        if self.modulation.lower() != "bpsk":
-            raise ValueError("The Aurora robust development mode requires BPSK")
+        if self.modulation.lower() not in {"bpsk", "qpsk"}:
+            raise ValueError("Aurora supports BPSK or QPSK constellation mapping")
         if self.symbol_rate <= 0.0:
             raise ValueError("Symbol rate must be positive")
         if self.fec_rate_numerator <= 0 or self.fec_rate_denominator <= 0:
@@ -42,11 +43,11 @@ class ModeDefinition:
             raise ValueError("Interleaver columns must be positive")
         if self.audio_sample_rate <= 0:
             raise ValueError("Audio sample rate must be positive")
-        if self.audio_sample_rate / self.symbol_rate % 1.0:
+        if self.waveform == "single_carrier" and self.audio_sample_rate / self.symbol_rate % 1.0:
             raise ValueError("Waveform requires an integer samples-per-symbol ratio")
         if not 0.0 < self.audio_carrier_hz < self.audio_sample_rate / 2.0:
             raise ValueError("Audio carrier must be below the Nyquist frequency")
-        if self.pulse_shape != "root_raised_cosine":
+        if self.pulse_shape not in {"root_raised_cosine", "ofdm"}:
             raise ValueError("Unsupported pulse shape")
         if not 0.0 < self.pulse_rolloff <= 1.0:
             raise ValueError("Pulse roll-off must be between zero and one")
@@ -54,10 +55,12 @@ class ModeDefinition:
             raise ValueError("Pulse span must be a positive even symbol count")
         if self.interleaver_geometry_signaled:
             raise ValueError("Aurora has no signaling protocol for mode geometry")
+        if self.waveform not in {"single_carrier", "ofdm"}:
+            raise ValueError("Unsupported Aurora waveform")
 
 
-AURORA_ROBUST_MODE = ModeDefinition(
-    name="Aurora robust simulation mode",
+AURORA_SINGLE_CARRIER_RESEARCH_MODE = ModeDefinition(
+    name="Aurora archived single-carrier research mode",
     modulation="bpsk",
     symbol_rate=31.25,
     fec_rate_numerator=1,
@@ -71,4 +74,23 @@ AURORA_ROBUST_MODE = ModeDefinition(
     pulse_shape="root_raised_cosine",
     pulse_rolloff=0.35,
     pulse_span_symbols=8,
+)
+
+
+AURORA_ROBUST_MODE = ModeDefinition(
+    name="Aurora OFDM development mode",
+    modulation="bpsk",
+    symbol_rate=300.0,
+    fec_rate_numerator=1,
+    fec_rate_denominator=2,
+    fec_constraint_length=7,
+    fec_generator_polynomials=(0o171, 0o133),
+    fec_terminated=True,
+    interleaver_columns=8,
+    audio_sample_rate=12_000,
+    audio_carrier_hz=1_500.0,
+    pulse_shape="ofdm",
+    pulse_rolloff=0.10,
+    pulse_span_symbols=2,
+    waveform="ofdm",
 )
