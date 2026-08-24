@@ -1,0 +1,29 @@
+Name:           aurora-hf-modem
+Version:        @RPM_VERSION@
+Release:        1%{?dist}
+Summary:        Aurora adaptive weak-signal HF digital modem
+License:        Proprietary
+BuildArch:      @ARCH@
+Source0:        aurora-hf-modem-@VERSION@.tar.gz
+AutoReqProv:    no
+
+%description
+Aurora is a cross-platform digital communications application for amateur radio.
+
+%prep
+%setup -q -n aurora-hf-modem-@VERSION@
+
+%install
+mkdir -p %{buildroot}/opt/aurora %{buildroot}%{_bindir}
+mkdir -p %{buildroot}%{_datadir}/applications
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/256x256/apps
+cp -a app/. %{buildroot}/opt/aurora/
+ln -s /opt/aurora/Aurora %{buildroot}%{_bindir}/aurora
+install -m 0644 aurora.desktop %{buildroot}%{_datadir}/applications/aurora.desktop
+install -m 0644 aurora.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/aurora.png
+
+%files
+/opt/aurora
+%{_bindir}/aurora
+%{_datadir}/applications/aurora.desktop
+%{_datadir}/icons/hicolor/256x256/apps/aurora.png

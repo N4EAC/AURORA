@@ -3,14 +3,37 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
-from audio.loopback import run_audio_loopback, run_deep_audio_loopback
+from audio.loopback import (
+    _playrec_with_timeout,
+    run_audio_loopback,
+    run_deep_audio_loopback,
+)
 
 
 class AudioLoopbackTests(unittest.TestCase):
+    def test_stalled_audio_backend_is_stopped_at_timeout(self) -> None:
+        samples = np.zeros(12, dtype=np.float32)
+        stream = Mock(active=True)
+        with (
+            patch("audio.loopback.sd.playrec", return_value=samples),
+            patch("audio.loopback.sd.get_stream", return_value=stream),
+            patch("audio.loopback.sd.stop") as stop,
+            patch("audio.loopback.time.monotonic", side_effect=(0.0, 1.0)),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "timeout"):
+                _playrec_with_timeout(
+                    samples,
+                    sample_rate=12_000,
+                    input_device=1,
+                    output_device=2,
+                    timeout_margin_seconds=0.1,
+                )
+        stop.assert_called_once_with()
+
     def test_deep_payload_length_is_validated_before_audio_access(self) -> None:
         with patch("audio.loopback.sd.playrec") as playrec:
             with self.assertRaisesRegex(ValueError, "exactly 20"):
@@ -47,13 +70,13 @@ class AudioLoopbackTests(unittest.TestCase):
 
     def test_full_duplex_capture_decodes_and_writes_wav(self) -> None:
         def loopback(samples, **options):
-            self.assertEqual(options["device"], (1, 2))
-            self.assertTrue(options["blocking"])
+            self.assertEqual(options["input_device"], 1)
+            self.assertEqual(options["output_device"], 2)
             return samples.copy()
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.wav"
-            with patch("audio.loopback.sd.playrec", side_effect=loopback):
+            with patch("audio.loopback._playrec_with_timeout", side_effect=loopback):
                 result = run_audio_loopback(
                     "Aurora audio",
                     input_device=1,
@@ -74,7 +97,7 @@ class AudioLoopbackTests(unittest.TestCase):
             return samples.copy()
 
         with tempfile.TemporaryDirectory() as directory:
-            with patch("audio.loopback.sd.playrec", side_effect=loopback):
+            with patch("audio.loopback._playrec_with_timeout", side_effect=loopback):
                 run_audio_loopback(
                     "gain",
                     input_device=1,
@@ -86,12 +109,13 @@ class AudioLoopbackTests(unittest.TestCase):
 
     def test_deep_full_duplex_capture_decodes_and_writes_wav(self) -> None:
         def loopback(samples, **options):
-            self.assertEqual(options["device"], (1, 2))
+            self.assertEqual(options["input_device"], 1)
+            self.assertEqual(options["output_device"], 2)
             return samples.copy()
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "deep_capture.wav"
-            with patch("audio.loopback.sd.playrec", side_effect=loopback):
+            with patch("audio.loopback._playrec_with_timeout", side_effect=loopback):
                 result = run_deep_audio_loopback(
                     b"Aurora Deep message!",
                     input_device=1,

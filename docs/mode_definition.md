@@ -13,16 +13,16 @@ remain unspecified.
 |---|---|
 | Waveform | OFDM |
 | Subcarrier constellation | BPSK, normalized unit-energy symbols |
-| Aggregate constellation rate | 300 symbols/s |
+| Aggregate constellation rate | 300, 1,575, or 1,950 symbols/s |
 | FEC | Rate-1/2 convolutional code |
 | Constraint length | 7 |
 | Generator polynomials | 171 and 133 (octal) |
 | Trellis termination | Six zero tail bits |
-| Interleaver | Deterministic ragged block, 8 columns |
+| Interleaver | Deterministic ragged block, 8, 42, or 52 columns |
 | Interleaver placement | After FEC, before symbol mapping |
 | Experimental audio sample rate | 12,000 samples/s |
 | Experimental audio carrier | 1,500 Hz |
-| OFDM geometry | 256-point FFT, 64-sample cyclic prefix, 8 active carriers |
+| OFDM geometry | 256-point FFT, 64-sample prefix, 8, 42, or 52 active carriers |
 
 The corresponding immutable Python definition is
 `modem.mode_definition.AURORA_ROBUST_MODE`.
@@ -31,8 +31,8 @@ The physical-layer details are defined in `docs/ofdm_mode_definition.md`.
 
 ## Interleaver decision
 
-The 8-column geometry aligns one interleaver row with one OFDM data block. It is
-fixed by this development-mode definition and is not
+Each interleaver geometry aligns one row with the active carriers in its OFDM
+profile. The selected geometry is fixed for a frame and is not
 signaled. A receiver exercising this exact mode must already know the geometry.
 Signaling it now would imply a bootstrap header and parsing rules that have not
 been designed or validated.

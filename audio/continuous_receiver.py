@@ -41,14 +41,11 @@ class ContinuousReceiverConfig:
     def frame_sample_count(self) -> int:
         """Return generated waveform samples without external leading silence."""
         if self.mode.waveform == "ofdm":
-            from dsp.ofdm import OfdmConfig, frame_sample_count
+            from dsp.ofdm import config_for_mode, frame_sample_count
 
             return frame_sample_count(
                 self.payload_symbol_count,
-                OfdmConfig(
-                    sample_rate=self.mode.audio_sample_rate,
-                    audio_center_hz=self.mode.audio_carrier_hz,
-                ),
+                config_for_mode(self.mode),
             )
         ratio = samples_per_symbol(self.mode)
         taps = root_raised_cosine_taps(

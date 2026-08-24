@@ -271,9 +271,7 @@ def bits_per_symbol(modulation: str) -> int:
     normalized = modulation.upper()
     if normalized == "BPSK":
         return 1
-    if normalized == "QPSK":
-        return 2
-    raise ValueError(f"Unsupported modulation: {modulation}")
+    raise ValueError("Aurora uses BPSK subcarrier modulation")
 
 
 def snr_to_esn0_db(
@@ -401,6 +399,8 @@ class TestingController:
 
     def local_round_trip(self, text: str, modulation: str) -> LocalTestResult:
         """Exercise the Aurora codec locally without generating RF or audio."""
+        if modulation.upper() != "BPSK":
+            raise ValueError("Aurora uses BPSK subcarrier modulation")
         message = text.strip()
         if not message:
             raise ValueError("Enter a message for the local test")
@@ -448,6 +448,8 @@ class TestingController:
         interleaver_columns: int | None = None,
     ) -> BenchmarkResult:
         """Run repeatable impaired symbol-domain codec frames."""
+        if modulation.upper() != "BPSK":
+            raise ValueError("Aurora uses BPSK subcarrier modulation")
         message = text.strip()
         if not message:
             raise ValueError("Enter a message for the channel test")

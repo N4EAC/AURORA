@@ -10,10 +10,6 @@ from dataclasses import asdict
 import numpy as np
 
 from audio.buffer import AudioBuffer
-from audio.continuous_receiver import (
-    ContinuousAudioReceiver,
-    ContinuousReceiverConfig,
-)
 from audio.device import (
     AudioDevice,
     compatible_outputs,
@@ -26,10 +22,15 @@ from audio.loopback import (
     run_audio_loopback,
     run_deep_audio_loopback,
 )
+from audio.multichannel_receiver import (
+    MultichannelAudioReceiver,
+    MultichannelDecodeEvent,
+    mode_at_frequency,
+)
 from audio.playback import play_audio, stop_playback
 from audio.streaming import AudioInputStream, AudioStreamStatus
 from config import AppSettings, SETTINGS
-from dsp.core import encode_payload
+from dsp.core import decode_transmission, encode_payload
 from dsp.spectrum import compute_spectrum
 from dsp.waveform import modulate_audio
 from gui.diagnostics_panel import DiagnosticsPanel
@@ -45,6 +46,17 @@ from gui.testing_controller import (
 from gui.theme import PALETTE, configure_theme
 from gui.waterfall_view import WaterfallView
 from modem import AURORA_ROBUST_MODE
+from modem.bandwidth_adaptation import (
+    ChannelConditions,
+    fixed_bandwidth,
+    select_bandwidth,
+)
+from modem.station_data import (
+    StationData,
+    decode_station_transport,
+    encode_station_transmission,
+)
+from modem.chat_transport import encode_chat_transmission
 from waterfall.model import WaterfallModel
 from util.session_debug_log import SessionDebugLog
 
@@ -139,17 +151,56 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         justify=tk.LEFT,
     ).pack(anchor=tk.W, pady=(6, 12))
 
-    ttk.Label(sidebar, text="Modulation", style="Aurora.Muted.TLabel").pack(
+    modulation = AURORA_ROBUST_MODE.modulation.upper()
+
+    ttk.Label(sidebar, text="OFDM bandwidth", style="Aurora.Muted.TLabel").pack(
         anchor=tk.W
     )
-    modulation = tk.StringVar(value="QPSK")
-    ttk.Combobox(
+    bandwidth_selection = tk.StringVar(value="AUTO")
+    bandwidth_box = ttk.Combobox(
         sidebar,
-        textvariable=modulation,
-        values=("QPSK", "BPSK"),
+        textvariable=bandwidth_selection,
+        values=("AUTO", "500 Hz", "2.3 kHz", "2.8 kHz"),
         state="readonly",
         width=18,
-    ).pack(fill=tk.X, pady=(4, 12))
+    )
+    bandwidth_box.pack(fill=tk.X, pady=(4, 4))
+    bandwidth_status = tk.StringVar(value="500 Hz safe fallback")
+    ttk.Label(
+        sidebar,
+        textvariable=bandwidth_status,
+        style="Aurora.Muted.TLabel",
+        wraplength=215,
+        justify=tk.LEFT,
+    ).pack(anchor=tk.W, pady=(0, 12))
+
+    ttk.Separator(sidebar).pack(fill=tk.X, pady=(0, 10))
+    ttk.Label(sidebar, text="AX.25 STATION DATA", style="Aurora.Section.TLabel").pack(
+        anchor=tk.W, pady=(0, 6)
+    )
+    station_fields = ttk.Frame(sidebar, style="Aurora.Panel.TFrame")
+    station_fields.pack(fill=tk.X, pady=(0, 6))
+    station_fields.columnconfigure(1, weight=1)
+    station_callsign = tk.StringVar(value="N4EAC")
+    station_grid = tk.StringVar()
+    station_latitude = tk.StringVar()
+    station_longitude = tk.StringVar()
+    for row, (label, variable) in enumerate(
+        (
+            ("Callsign", station_callsign),
+            ("Grid", station_grid),
+            ("Latitude", station_latitude),
+            ("Longitude", station_longitude),
+        )
+    ):
+        ttk.Label(station_fields, text=label, style="Aurora.Muted.TLabel").grid(
+            row=row, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(station_fields, textvariable=variable, width=13).grid(
+            row=row, column=1, sticky="ew", padx=(8, 0), pady=2
+        )
+    station_data_button = ttk.Button(sidebar, text="PROCESS AX.25 DATA")
+    station_data_button.pack(fill=tk.X, pady=(0, 12))
 
     ttk.Label(sidebar, text="Channel preset", style="Aurora.Muted.TLabel").pack(
         anchor=tk.W
@@ -219,15 +270,48 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     workspace.rowconfigure(3, weight=1)
     workspace.rowconfigure(5, weight=1)
 
+    spectrum_header = ttk.Frame(workspace, style="Aurora.TFrame")
+    spectrum_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
     ttk.Label(
-        workspace, text="SIGNAL SPECTRUM", style="Aurora.Status.TLabel"
-    ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        spectrum_header, text="SIGNAL SPECTRUM", style="Aurora.Status.TLabel"
+    ).pack(side=tk.LEFT)
+    tuning_frequency = tk.IntVar(value=1_500)
+    ttk.Label(
+        spectrum_header, text="TX/RX", style="Aurora.Status.TLabel"
+    ).pack(side=tk.LEFT, padx=(18, 4))
+    tuning_control = ttk.Spinbox(
+        spectrum_header,
+        textvariable=tuning_frequency,
+        from_=100,
+        to=3_000,
+        increment=100,
+        width=7,
+    )
+    tuning_control.pack(side=tk.LEFT)
+    ttk.Label(
+        spectrum_header, text="Hz • click spectrum to tune", style="Aurora.Status.TLabel"
+    ).pack(side=tk.LEFT, padx=(4, 0))
+
+    def spectrum_frequency_selected(frequency_hz: int) -> None:
+        tuning_frequency.set(frequency_hz)
+
     spectrum = SpectrumView(
         workspace,
         floor_db=settings.spectrum_floor_db,
         ceiling_db=settings.spectrum_ceiling_db,
+        selected_frequency_hz=tuning_frequency.get(),
+        selection_changed=spectrum_frequency_selected,
     )
     spectrum.grid(row=1, column=0, sticky="nsew")
+
+    def tuning_variable_changed(*unused: object) -> None:
+        del unused
+        try:
+            spectrum.set_selected_frequency(int(tuning_frequency.get()))
+        except tk.TclError:
+            return
+
+    tuning_frequency.trace_add("write", tuning_variable_changed)
 
     ttk.Label(
         workspace, text="SIGNAL HISTORY", style="Aurora.Status.TLabel"
@@ -247,8 +331,10 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     result_tabs = ttk.Notebook(workspace)
     result_tabs.grid(row=5, column=0, sticky="nsew")
     history_tab = ttk.Frame(result_tabs)
+    other_signals_tab = ttk.Frame(result_tabs)
     benchmark_tab = ttk.Frame(result_tabs)
     result_tabs.add(history_tab, text="Messages")
+    result_tabs.add(other_signals_tab, text="Other Signals")
     result_tabs.add(benchmark_tab, text="Channel Results")
 
     history = tk.Text(
@@ -267,6 +353,21 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     history.tag_configure("rx", foreground=PALETTE.accent)
     history.tag_configure("error", foreground=PALETTE.danger)
     history.pack(fill=tk.BOTH, expand=True)
+
+    other_signals = ttk.Treeview(
+        other_signals_tab,
+        columns=("frequency", "callsign", "message"),
+        show="headings",
+        height=5,
+    )
+    for column, heading, width in (
+        ("frequency", "Frequency", 90),
+        ("callsign", "Callsign", 100),
+        ("message", "Message", 520),
+    ):
+        other_signals.heading(column, text=heading)
+        other_signals.column(column, width=width, anchor=tk.W)
+    other_signals.pack(fill=tk.BOTH, expand=True)
 
     sweep_controls = ttk.Frame(benchmark_tab, padding=(4, 4))
     sweep_controls.grid(row=0, column=0, columnspan=2, sticky="ew")
@@ -461,13 +562,71 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     loopback_results: queue.Queue[object] = queue.Queue()
     loopback_running = False
     continuous_stream: AudioInputStream | None = None
-    continuous_receiver: ContinuousAudioReceiver | None = None
+    continuous_receiver: MultichannelAudioReceiver | None = None
     continuous_stop = threading.Event()
     continuous_blocks: queue.Queue[AudioBuffer | AudioStreamStatus] = queue.Queue()
     continuous_events: queue.Queue[object] = queue.Queue()
-    continuous_expected_text = ""
+    continuous_mode = AURORA_ROBUST_MODE
+    continuous_decode_count = 0
     sweep_cancel = threading.Event()
     profile_thresholds: dict[str, dict[str, dict[str, float | None]]] = {}
+
+    def selected_bandwidth_mode():
+        """Return the fixed or automatically selected OFDM mode."""
+        selection = bandwidth_selection.get()
+        if selection != "AUTO":
+            bandwidth = {
+                "500 Hz": 500,
+                "2.3 kHz": 2_300,
+                "2.8 kHz": 2_800,
+            }[selection]
+            decision = fixed_bandwidth(bandwidth)
+        else:
+            preset = preset_name.get()
+            assumptions = {
+                "Clean": (0.05, 0.10, 1.0, 0.95),
+                "Moderate HF": (0.20, 0.30, 5.0, 0.85),
+                "Weak Signal": (0.45, 0.55, 9.0, 0.80),
+                "Severe": (0.70, 0.75, 14.0, 0.80),
+            }
+            interference, fading, multipath_ms, confidence = assumptions[preset]
+            decision = select_bandwidth(
+                ChannelConditions(
+                    snr_db=float(snr_db.get()),
+                    interference_ratio=interference,
+                    fading_depth=fading,
+                    multipath_delay_ms=multipath_ms,
+                    frequency_error_hz=float(frequency_offset.get()),
+                    available_audio_passband_hz=2_800.0,
+                    confidence=confidence,
+                )
+            )
+        bandwidth_status.set(decision.reason)
+        diagnostics.update_bandwidth(
+            decision.bandwidth_hz,
+            decision.automatic,
+        )
+        return decision.mode
+
+    def refresh_bandwidth_selection(event: object | None = None) -> None:
+        del event
+        selected_bandwidth_mode()
+
+    def apply_tuning_frequency(event: object | None = None) -> None:
+        del event
+        try:
+            frequency = int(tuning_frequency.get())
+            if not 100 <= frequency <= 3_000:
+                raise ValueError
+        except (tk.TclError, ValueError):
+            tuning_frequency.set(1_500)
+            frequency = 1_500
+        frequency = round(frequency / 100) * 100
+        tuning_frequency.set(frequency)
+        spectrum.set_selected_frequency(frequency)
+
+    tuning_control.bind("<Return>", apply_tuning_frequency)
+    tuning_control.bind("<FocusOut>", apply_tuning_frequency)
 
     def animate_signal() -> None:
         nonlocal animation_job
@@ -509,7 +668,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     def run_local_test() -> None:
         started = time.perf_counter()
         try:
-            result = controller.local_round_trip(message.get(), modulation.get())
+            result = controller.local_round_trip(message.get(), modulation)
             elapsed_ms = (time.perf_counter() - started) * 1_000.0
             session_log.record(
                 "LOCAL_CODEC_RESULT",
@@ -530,12 +689,57 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         except (UnicodeDecodeError, ValueError) as error:
             session_log.record(
                 "LOCAL_CODEC_ERROR",
-                modulation=modulation.get(),
+                modulation=modulation,
                 message_length=len(message.get()),
                 error_type=type(error).__name__,
                 error=str(error),
             )
             _append_history(history, f"[TEST ERROR] {error}", "error")
+
+    def run_station_data_test() -> None:
+        """Exercise AX.25 station transport through the local Aurora codec."""
+        try:
+            mode = selected_bandwidth_mode()
+            latitude_text = station_latitude.get().strip()
+            longitude_text = station_longitude.get().strip()
+            latitude = float(latitude_text) if latitude_text else None
+            longitude = float(longitude_text) if longitude_text else None
+            station = StationData(
+                station_callsign.get(),
+                grid=station_grid.get().strip() or None,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            transmission = encode_station_transmission(station, mode=mode)
+            decoded = decode_station_transport(decode_transmission(transmission))
+            location = decoded.data.grid or "no grid"
+            if decoded.data.latitude is not None:
+                location += (
+                    f" | {decoded.data.latitude:+.6f},"
+                    f" {decoded.data.longitude:+.6f}"
+                )
+            _append_history(
+                history,
+                f"[AX.25/{mode.occupied_bandwidth_hz} Hz] "
+                f"{decoded.data.callsign} → {decoded.destination} | {location}",
+                "rx",
+            )
+            session_log.record(
+                "AX25_STATION_DATA_RESULT",
+                success=True,
+                callsign=decoded.data.callsign,
+                has_grid=decoded.data.grid is not None,
+                has_gps=decoded.data.latitude is not None,
+                bandwidth_hz=mode.occupied_bandwidth_hz,
+                gps_values_logged=False,
+            )
+        except (UnicodeDecodeError, ValueError) as error:
+            _append_history(history, f"[AX.25 ERROR] {error}", "error")
+            session_log.record(
+                "AX25_STATION_DATA_ERROR",
+                error_type=type(error).__name__,
+                error=str(error),
+            )
 
     def refresh_audio_devices() -> None:
         nonlocal input_devices, output_devices, all_output_devices
@@ -710,6 +914,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         if loopback_running:
             return
         try:
+            selected_mode = selected_bandwidth_mode()
             selected_message = message.get().strip()
             selected_input = input_devices[input_device_name.get()]
             selected_output = output_devices[output_device_name.get()]
@@ -734,6 +939,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             message_length=len(selected_message),
             capture_path=str(capture_path),
             radio_control=False,
+            bandwidth_hz=selected_mode.occupied_bandwidth_hz,
         )
 
         def worker() -> None:
@@ -744,6 +950,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                         input_device=selected_input.index,
                         output_device=selected_output.index,
                         capture_path=capture_path,
+                        mode=selected_mode,
                     )
                 )
             except Exception as error:
@@ -811,6 +1018,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         root.after(100, poll_loopback)
 
     def poll_continuous_events() -> None:
+        nonlocal continuous_decode_count
         if continuous_stream is None:
             return
         try:
@@ -829,32 +1037,41 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                     )
                     stop_continuous_rx()
                     return
-                received_text = outcome.payload.decode("utf-8")
-                success = received_text == continuous_expected_text
-                _append_history(
-                    history,
-                    f"[CONTINUOUS RX/CRC PASS] {received_text}",
-                    "rx" if success else "error",
-                )
-                receiver_state = continuous_receiver.diagnostics
+                event: MultichannelDecodeEvent = outcome
+                continuous_decode_count += 1
+                selected = event.frequency_hz == tuning_frequency.get()
+                if selected:
+                    _append_history(
+                        history,
+                        f"[RX {event.frequency_hz} Hz/{event.message.callsign}] "
+                        f"{event.message.text}",
+                        "rx",
+                    )
+                else:
+                    other_signals.insert(
+                        "",
+                        0,
+                        values=(
+                            f"{event.frequency_hz} Hz",
+                            event.message.callsign,
+                            event.message.text,
+                        ),
+                    )
                 loopback_status.set(
-                    f"Continuous RX: {receiver_state.decoded_frames} decoded, "
-                    f"{receiver_state.failed_windows} failed windows, "
-                    f"{receiver_state.discontinuities} discontinuities"
+                    f"Spectrum RX: {continuous_decode_count} decoded • "
+                    f"selected {tuning_frequency.get()} Hz"
                 )
                 session_log.record(
-                    "CONTINUOUS_RX_RESULT",
-                    success=success,
-                    received_text=received_text,
-                    sync_metric=round(outcome.diagnostics.sync_metric, 6),
+                    "MULTICHANNEL_RX_RESULT",
+                    callsign=event.message.callsign,
+                    received_text=event.message.text,
+                    audio_frequency_hz=event.frequency_hz,
+                    routed_to_selected_chat=selected,
+                    sync_metric=round(event.sync_metric, 6),
                     frequency_offset_hz=round(
-                        outcome.diagnostics.frequency_offset_hz,
+                        event.frequency_offset_hz,
                         6,
                     ),
-                    timing_sample=outcome.diagnostics.symbol_start_sample,
-                    recovery=outcome.recovery,
-                    repair_symbol=outcome.repair_symbol,
-                    **asdict(receiver_state),
                 )
         except queue.Empty:
             pass
@@ -862,24 +1079,20 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
 
     def start_continuous_rx() -> None:
         nonlocal continuous_stream, continuous_receiver
-        nonlocal continuous_expected_text
+        nonlocal continuous_mode, continuous_decode_count
         if continuous_stream is not None:
             stop_continuous_rx()
             return
         try:
+            continuous_mode = selected_bandwidth_mode()
             selected_input = input_devices[input_device_name.get()]
             selected_message = message.get().strip()
-            if not selected_message:
-                raise ValueError("Enter a continuous receive test message")
-            transmission = encode_payload(
-                selected_message.encode("utf-8"),
-                modulation=AURORA_ROBUST_MODE.modulation,
-                interleaver_columns=AURORA_ROBUST_MODE.interleaver_columns,
+            channels = tuple(range(100, 3_001, 100))
+            continuous_receiver = MultichannelAudioReceiver(
+                channels,
+                continuous_mode,
             )
-            continuous_receiver = ContinuousAudioReceiver(
-                ContinuousReceiverConfig(len(transmission.symbols))
-            )
-            continuous_expected_text = selected_message
+            continuous_decode_count = 0
             continuous_stop.clear()
             while not continuous_blocks.empty():
                 continuous_blocks.get_nowait()
@@ -934,15 +1147,19 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         deep_loopback_button.configure(state=tk.DISABLED)
         refresh_audio_button.configure(state=tk.DISABLED)
         loopback_status.set(
-            f"Continuous RX listening for {len(transmission.symbols)} symbols"
+            f"Spectrum RX scanning 100–3000 Hz • selected "
+            f"{tuning_frequency.get()} Hz"
         )
         session_log.record(
             "CONTINUOUS_RX_START",
             input_device=input_device_name.get(),
-            expected_message_length=len(selected_message),
-            payload_symbol_count=len(transmission.symbols),
+            channel_start_hz=100,
+            channel_stop_hz=3_000,
+            channel_step_hz=100,
+            selected_frequency_hz=tuning_frequency.get(),
             fixed_geometry=True,
             radio_control=False,
+            bandwidth_hz=continuous_mode.occupied_bandwidth_hz,
         )
         root.after(100, poll_continuous_events)
 
@@ -954,11 +1171,6 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         continuous_stream.stop()
         continuous_stream.close()
         continuous_stream = None
-        state = (
-            continuous_receiver.diagnostics
-            if continuous_receiver is not None
-            else None
-        )
         continuous_receiver = None
         stop_playback()
         continuous_rx_button.configure(text="START CONTINUOUS RX")
@@ -969,7 +1181,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         loopback_status.set("Continuous RX stopped")
         session_log.record(
             "CONTINUOUS_RX_STOP",
-            diagnostics=None if state is None else asdict(state),
+            decoded_messages=continuous_decode_count,
         )
 
     def send_to_continuous_rx() -> None:
@@ -978,17 +1190,18 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         try:
             selected_output = output_devices[output_device_name.get()]
             selected_message = message.get().strip()
-            if selected_message != continuous_expected_text:
-                raise ValueError(
-                    "Message changed; restart continuous RX for the new geometry"
-                )
-            transmission = encode_payload(
-                selected_message.encode("utf-8"),
-                modulation=AURORA_ROBUST_MODE.modulation,
-                interleaver_columns=AURORA_ROBUST_MODE.interleaver_columns,
+            tuned_mode = mode_at_frequency(
+                continuous_mode,
+                tuning_frequency.get(),
+            )
+            transmission = encode_chat_transmission(
+                station_callsign.get(),
+                selected_message,
+                mode=tuned_mode,
             )
             waveform = modulate_audio(
                 transmission.symbols,
+                tuned_mode,
                 leading_silence_samples=settings.audio_sample_rate,
             )
             audio = AudioBuffer(
@@ -998,7 +1211,8 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
             play_audio(audio, device=selected_output.index)
             _append_history(
                 history,
-                f"[CONTINUOUS TX] {selected_message}",
+                f"[TX {tuning_frequency.get()} Hz/{station_callsign.get()}] "
+                f"{selected_message}",
                 "tx",
             )
             session_log.record(
@@ -1006,6 +1220,9 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 output_device=output_device_name.get(),
                 message_length=len(selected_message),
                 output_gain=0.75,
+                bandwidth_hz=continuous_mode.occupied_bandwidth_hz,
+                audio_frequency_hz=tuning_frequency.get(),
+                callsign=station_callsign.get(),
             )
         except Exception as error:
             loopback_status.set(f"Continuous TX failed: {error}")
@@ -1015,6 +1232,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         preset = CHANNEL_PRESETS[preset_name.get()]
         snr_db.set(preset.snr_db)
         frequency_offset.set(preset.frequency_offset_hz)
+        selected_bandwidth_mode()
 
     def display_benchmark_result(
         result: BenchmarkResult, event_name: str = "CHANNEL_TEST_RESULT"
@@ -1221,7 +1439,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         session_log.record(
             "CHANNEL_TEST_START",
             preset=preset_name.get(),
-            modulation=modulation.get(),
+            modulation=modulation,
             injected_snr_db=selected_snr,
             injected_frequency_offset_hz=selected_offset,
             frame_count=frames,
@@ -1230,7 +1448,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
         )
         _append_history(
             history,
-            f"[CHANNEL] Running {frames} {modulation.get()} frames at "
+            f"[CHANNEL] Running {frames} {modulation} frames at "
             f"{selected_snr:.1f} dB SNR, {selected_offset:+.2f} Hz rotation.",
         )
 
@@ -1239,7 +1457,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 benchmark_results.put(
                     controller.run_benchmark(
                         selected_message,
-                        modulation.get(),
+                        modulation,
                         snr_db=selected_snr,
                         frequency_offset_hz=selected_offset,
                         frame_count=frames,
@@ -1369,6 +1587,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
 
     simulation_button.configure(command=toggle_simulation)
     send_button.configure(command=run_local_test)
+    station_data_button.configure(command=run_station_data_test)
     run_channel_button.configure(command=start_benchmark)
     run_hundred_button.configure(command=lambda: start_benchmark(100))
     show_results_button.configure(
@@ -1383,6 +1602,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     continuous_send_button.configure(command=send_to_continuous_rx)
     input_device_box.bind("<<ComboboxSelected>>", input_device_changed)
     preset_box.bind("<<ComboboxSelected>>", apply_preset)
+    bandwidth_box.bind("<<ComboboxSelected>>", refresh_bandwidth_selection)
     entry.bind("<Return>", lambda event: run_local_test())
     root.protocol("WM_DELETE_WINDOW", close_application)
     _append_history(
@@ -1391,6 +1611,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     )
     _append_history(history, f"[LOG] Session debug: {session_log.path.name}")
     session_log.record("GUI_READY", session_log=session_log.path.name)
+    selected_bandwidth_mode()
     refresh_audio_devices()
     return root
 

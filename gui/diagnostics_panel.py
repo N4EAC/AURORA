@@ -17,6 +17,7 @@ class DiagnosticsPanel(ttk.Frame):
             ("SNR", "-- dB"),
             ("Frequency offset", "-- Hz"),
             ("Timing offset", "--"),
+            ("Bandwidth", "500 Hz"),
             ("CRC", "WAITING"),
             ("FEC", "IDLE"),
             ("Frames", "0 / 0"),
@@ -46,6 +47,17 @@ class DiagnosticsPanel(ttk.Frame):
         )
         self._values["CRC"].configure(text=diagnostics.crc_status)
         self._values["FEC"].configure(text=diagnostics.fec_status)
+
+    def update_bandwidth(self, bandwidth_hz: int, automatic: bool) -> None:
+        """Display the active occupied-bandwidth profile and control policy."""
+        label = (
+            f"{bandwidth_hz / 1_000.0:.1f} kHz"
+            if bandwidth_hz >= 1_000
+            else f"{bandwidth_hz} Hz"
+        )
+        self._values["Bandwidth"].configure(
+            text=f"{label} {'AUTO' if automatic else 'FIXED'}"
+        )
 
     def update_benchmark(self, result: BenchmarkResult) -> None:
         """Display aggregate results from a controlled channel benchmark."""

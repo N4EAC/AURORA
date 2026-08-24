@@ -2,6 +2,8 @@
   <img src="Aurora_logo.png" alt="Aurora logo" width="700">
 </p>
 
+Platform installer instructions are documented in [docs/building.md](docs/building.md).
+
 # Aurora
 
 **Project ID:** AURORA-HF-MODEM-2026
@@ -12,9 +14,9 @@ weak-signal communication under real-world HF propagation conditions.
 ## UPDATES — July 29, 2026 12:58 UTC
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
-  provisional cyclic-prefix OFDM physical layer. The first definition uses a
-  256-point FFT, eight active subcarriers, repeated training, per-carrier
-  equalization, and less than 1 kHz occupied bandwidth.
+  provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
+  500 Hz, 2.3 kHz, or 2.8 kHz profiles from measured channel conditions, with
+  500 Hz as the safe fallback.
 - Propagated PortAudio callback overflow and underflow status into the
   continuous receiver so partial state is discarded after a confirmed input
   discontinuity.
@@ -79,7 +81,7 @@ remains inactive: the loopback workflow does not use CAT, PTT, or RF.
 
 ## Design goals
 
-- Approximately 1 kHz occupied bandwidth
+- Adaptive 500 Hz, 2.3 kHz, and 2.8 kHz occupied-bandwidth profiles
 - Strong weak-signal performance and HF robustness
 - Adaptive operation and efficient synchronization
 - Forward error correction
@@ -96,7 +98,8 @@ objectives, not current capability claims. See `docs/performance_targets.md`.
 ## Technology
 
 - Python 3
-- Tkinter for the desktop interface
+- PySide6 for the responsive cross-platform desktop interface
+- Tkinter retained temporarily as a compatibility interface
 - NumPy for numerical processing
 - SciPy only where it provides a clear DSP advantage
 
@@ -108,11 +111,16 @@ The initial bit-level DSP core provides:
 - CRC-16/CCITT-FALSE integrity checking
 - Additive bit scrambling for spectral whitening
 - Rate-1/2 convolutional FEC with hard-decision Viterbi decoding
-- Normalized BPSK and Gray-coded QPSK symbol mapping
+- Normalized BPSK symbol mapping for Aurora OFDM subcarriers
 - A composable payload-to-symbol and symbol-to-payload pipeline
 
 The generic bit-level core remains independent of waveform filtering and
 automatic gain control.
+
+Aurora also provides a parallel AX.25 UI-frame transport for callsign, grid,
+GPS position, altitude, and short station metadata. AX.25 frames are identified
+by an Aurora frame flag and share the same FEC and adaptive OFDM waveform as
+native messages. See [the AX.25 transport definition](docs/ax25_transport.md).
 
 The primary waveform maps protected constellation values across a provisional
 12 kHz cyclic-prefix OFDM signal. Repeated training blocks provide acquisition,
@@ -157,7 +165,7 @@ The initial receiver operates on complex baseband samples and provides:
 - Frequency-offset estimation from preamble phase slope
 - Complex carrier-offset correction
 - Interpolated Gardner symbol-timing recovery
-- BPSK and QPSK soft log-likelihood demapping
+- BPSK soft log-likelihood demapping for Aurora receive paths
 - Soft-input Viterbi FEC decoding
 - Sync, SNR, frequency-offset, and timing diagnostics
 
@@ -206,7 +214,7 @@ SIGNAL** to exercise the current displays without using audio hardware.
 
 ## Local operator test
 
-The first operator iteration includes a BPSK/QPSK local codec test. Enter a
+The operator interface includes a BPSK local codec test. Enter a
 message and select **RUN LOCAL CODEC TEST** to pass it through Aurora framing,
 scrambling, FEC, symbol mapping, soft decoding, and CRC validation. This is a
 local software test only and does not generate an audio waveform or RF signal.
@@ -291,6 +299,17 @@ Run the current desktop shell with:
 ```powershell
 .\.venv\Scripts\python.exe .\aurora.py
 ```
+
+Aurora prefers the PySide6 interface. During the transition, the previous
+Tkinter interface remains available with `aurora.py --tk`.
+
+The primary interface displays only samples captured from the selected radio
+audio input. Aurora bundles and starts its own Hamlib `rigctld` service by
+default; operators do not need to install Hamlib. An external local or network
+service remains an advanced option. Radio frequency and mode polling are
+asynchronous. PTT is disarmed on connection and must be explicitly armed by
+the operator before Aurora enables transmission. See
+[the bundled Hamlib design](docs/bundled_hamlib.md).
 
 Aurora records startup, shutdown, and future operational messages in
 `logs/aurora.log`. Log files rotate automatically to limit disk usage.

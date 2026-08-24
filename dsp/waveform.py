@@ -99,14 +99,11 @@ def modulate_audio(
 ) -> AudioBuffer:
     """Create Aurora audio using the waveform selected by the mode."""
     if mode.waveform == "ofdm":
-        from dsp.ofdm import OfdmConfig, modulate_ofdm_audio
+        from dsp.ofdm import config_for_mode, modulate_ofdm_audio
 
         return modulate_ofdm_audio(
             payload_symbols,
-            OfdmConfig(
-                sample_rate=mode.audio_sample_rate,
-                audio_center_hz=mode.audio_carrier_hz,
-            ),
+            config_for_mode(mode),
             leading_silence_samples=leading_silence_samples,
             frequency_offset_hz=frequency_offset_hz,
         )
@@ -176,16 +173,19 @@ def demodulate_audio(
 ) -> WaveformResult:
     """Acquire and recover a known-length payload from Aurora audio."""
     if mode.waveform == "ofdm":
-        from dsp.ofdm import OfdmConfig, demodulate_ofdm_audio
+        from dsp.ofdm import (
+            acquisition_threshold,
+            config_for_mode,
+            demodulate_ofdm_audio,
+        )
+
+        ofdm_config = config_for_mode(mode)
 
         symbols, metric, offset, start = demodulate_ofdm_audio(
             audio,
             payload_symbol_count,
-            OfdmConfig(
-                sample_rate=mode.audio_sample_rate,
-                audio_center_hz=mode.audio_carrier_hz,
-            ),
-            sync_threshold=min(sync_threshold, 0.65),
+            ofdm_config,
+            sync_threshold=min(sync_threshold, acquisition_threshold(ofdm_config)),
         )
         return WaveformResult(
             symbols,
@@ -229,6 +229,42 @@ def demodulate_audio(
     return WaveformResult(
         payload,
         WaveformDiagnostics(True, metric, offset, start),
+    )
+
+
+def demodulate_audio_candidates(
+    audio: AudioBuffer,
+    payload_symbol_count: int,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
+    *,
+    sync_threshold: float = 0.70,
+) -> tuple[WaveformResult, ...]:
+    """Return bounded timing candidates for CRC-aided OFDM selection."""
+    if mode.waveform != "ofdm":
+        return (
+            demodulate_audio(
+                audio,
+                payload_symbol_count,
+                mode,
+                sync_threshold=sync_threshold,
+            ),
+        )
+    from dsp.ofdm import (
+        acquisition_threshold,
+        config_for_mode,
+        demodulate_ofdm_candidates,
+    )
+
+    config = config_for_mode(mode)
+    candidates = demodulate_ofdm_candidates(
+        audio,
+        payload_symbol_count,
+        config,
+        sync_threshold=min(sync_threshold, acquisition_threshold(config)),
+    )
+    return tuple(
+        WaveformResult(symbols, WaveformDiagnostics(True, metric, offset, start))
+        for symbols, metric, offset, start in candidates
     )
 
 

@@ -31,11 +31,9 @@ class TestingControllerTests(unittest.TestCase):
         self.assertEqual(diagnostics.crc_status, "WAITING")
         self.assertGreater(float(np.max(np.abs(samples))), 0.1)
 
-    def test_qpsk_local_round_trip(self) -> None:
-        result = TestingController().local_round_trip("Aurora test", "QPSK")
-        self.assertEqual(result.received_text, "Aurora test")
-        self.assertEqual(result.modulation, "QPSK")
-        self.assertEqual(result.diagnostics.crc_status, "PASS")
+    def test_qpsk_is_not_an_aurora_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "BPSK"):
+            TestingController().local_round_trip("Aurora test", "QPSK")
 
     def test_bpsk_local_round_trip(self) -> None:
         result = TestingController().local_round_trip("weak signal", "BPSK")
@@ -44,13 +42,13 @@ class TestingControllerTests(unittest.TestCase):
 
     def test_empty_message_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Enter a message"):
-            TestingController().local_round_trip("   ", "QPSK")
+            TestingController().local_round_trip("   ", "BPSK")
 
     def test_clean_channel_recovers_one_hundred_frames(self) -> None:
         preset = CHANNEL_PRESETS["Clean"]
         result = TestingController().run_benchmark(
             "Aurora",
-            "QPSK",
+            "BPSK",
             snr_db=preset.snr_db,
             frequency_offset_hz=preset.frequency_offset_hz,
             frame_count=100,
@@ -66,7 +64,7 @@ class TestingControllerTests(unittest.TestCase):
         severe = CHANNEL_PRESETS["Severe"]
         weak_result = controller.run_benchmark(
             "Aurora",
-            "QPSK",
+            "BPSK",
             snr_db=weak.snr_db,
             frequency_offset_hz=weak.frequency_offset_hz,
             frame_count=30,
@@ -74,7 +72,7 @@ class TestingControllerTests(unittest.TestCase):
         )
         severe_result = controller.run_benchmark(
             "Aurora",
-            "QPSK",
+            "BPSK",
             snr_db=severe.snr_db,
             frequency_offset_hz=severe.frequency_offset_hz,
             frame_count=30,
@@ -272,11 +270,9 @@ class TestingControllerTests(unittest.TestCase):
         converted = snr_to_esn0_db(-22.0, 2_500.0, 31.25)
         self.assertAlmostEqual(converted, -2.9691, places=3)
 
-    def test_coded_ebn0_accounts_for_bits_per_symbol(self) -> None:
+    def test_coded_ebn0_uses_bpsk_symbol_energy(self) -> None:
         bpsk = snr_to_coded_ebn0_db(-22.0, 2_500.0, 31.25, "BPSK")
-        qpsk = snr_to_coded_ebn0_db(-22.0, 2_500.0, 31.25, "QPSK")
         self.assertAlmostEqual(bpsk, -2.9691, places=3)
-        self.assertAlmostEqual(qpsk, -5.9794, places=3)
 
     def test_threshold_is_interpolated_only_when_bracketed(self) -> None:
         def point(snr_db: float, successes: int) -> BenchmarkResult:
@@ -338,7 +334,7 @@ class TestingControllerTests(unittest.TestCase):
             return checks <= 5
 
         result = TestingController().run_snr_sweep(
-            "cancel", "QPSK", config, should_continue=should_continue
+            "cancel", "BPSK", config, should_continue=should_continue
         )
         self.assertTrue(result.cancelled)
         self.assertLess(result.points[0].frame_count, config.frames_per_point)

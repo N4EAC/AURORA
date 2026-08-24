@@ -78,8 +78,8 @@ class WaveformTests(unittest.TestCase):
         random = np.random.default_rng(2026)
         symbols = np.where(random.integers(0, 2, 512) == 0, 1.0, -1.0)
         bandwidth = occupied_bandwidth_hz(modulate_audio(symbols))
-        self.assertGreater(bandwidth, 700.0)
-        self.assertLess(bandwidth, 1_000.0)
+        self.assertGreater(bandwidth, 350.0)
+        self.assertLess(bandwidth, 500.0)
 
 
 if __name__ == "__main__":

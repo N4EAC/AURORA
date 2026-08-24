@@ -4,7 +4,7 @@ import unittest
 
 from dsp.fec import CONSTRAINT_LENGTH, GENERATOR_POLYNOMIALS
 from gui.testing_controller import SweepConfig
-from modem import AURORA_ROBUST_MODE
+from modem import AURORA_BANDWIDTH_MODES, AURORA_ROBUST_MODE
 
 
 class ModeDefinitionTests(unittest.TestCase):
@@ -27,6 +27,20 @@ class ModeDefinitionTests(unittest.TestCase):
             AURORA_ROBUST_MODE.fec_generator_polynomials,
             GENERATOR_POLYNOMIALS,
         )
+
+    def test_adaptive_profiles_match_documented_geometry(self) -> None:
+        expected = {
+            500: (300.0, 8, 4),
+            2_300: (1_575.0, 42, 21),
+            2_800: (1_950.0, 52, 26),
+        }
+        self.assertEqual(set(AURORA_BANDWIDTH_MODES), set(expected))
+        for bandwidth, (rate, columns, edge) in expected.items():
+            mode = AURORA_BANDWIDTH_MODES[bandwidth]
+            self.assertEqual(mode.occupied_bandwidth_hz, bandwidth)
+            self.assertEqual(mode.symbol_rate, rate)
+            self.assertEqual(mode.interleaver_columns, columns)
+            self.assertEqual(mode.ofdm_edge_subcarrier, edge)
 
     def test_sweep_defaults_to_robust_mode_geometry(self) -> None:
         config = SweepConfig()

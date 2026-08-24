@@ -58,7 +58,7 @@ Before making ANY changes:
 
 3\. Summarize the project rules.
 
-4\. Codex may create and modify files inside D:\_projects\AURORA without prior approval when the changes directly support the user’s requested task. Codex must still obtain explicit approval before deleting files, performing destructive operations, changing files outside the project, committing, tagging, pushing, or interacting with real radio hardware.
+4\. Codex may create and modify files inside D:\_projects\AURORA without prior approval when the changes directly support the userâ€™s requested task. Codex must still obtain explicit approval before deleting files, performing destructive operations, changing files outside the project, committing, tagging, pushing, or interacting with real radio hardware.
 
 
 \---
@@ -187,7 +187,21 @@ Never place GUI code inside DSP modules.
 
 
 
-Maintain approximately 1 kHz occupied bandwidth unless explicitly instructed otherwise.
+Aurora must support adaptive occupied-bandwidth profiles of:
+
+\- 500 Hz
+
+\- 2.3 kHz
+
+\- 2.8 kHz
+
+The modem should automatically select the most suitable profile using measured
+channel conditions, including signal quality, interference, fading, multipath,
+frequency stability, and available audio passband. Adaptation must be bounded,
+documented, and observable through diagnostics. When channel estimates are
+missing or unreliable, prefer the most conservative compatible profile.
+
+Do not exceed 2.8 kHz occupied bandwidth unless explicitly instructed otherwise.
 
 
 
@@ -440,4 +454,3 @@ The objective is to produce a complete Windows desktop application implementing 
 
 
 The resulting application should be suitable for real amateur radio HF operation.
-
