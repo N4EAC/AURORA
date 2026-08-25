@@ -9,7 +9,9 @@ Run `python tools/bootstrap_hamlib.py` when preparing a development workspace
 or application package. Release packaging must run the bootstrap once for each
 target platform and include that platform's runtime directory.
 
-Aurora starts the private service only after the operator chooses a Hamlib
-model number, CAT device, baud rate, and Connect. It binds to localhost, stops
-with Aurora, and leaves PTT disarmed until the operator explicitly enables it.
-An external `rigctld` endpoint remains available for advanced station setups.
+Aurora starts the private service only after the operator chooses a named radio
+model, CAT device, baud rate, and Connect. It binds to localhost and stops with
+Aurora. PTT Control defaults to enabled, but SEND remains blocked until Hamlib
+connects; PTT is keyed only for an explicit SEND action and is always released
+after playback or an error. An external `rigctld` endpoint remains available
+for advanced station setups.

@@ -7,24 +7,25 @@ import queue
 import threading
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDockWidget,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
-    QScrollArea,
     QSpinBox,
-    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -45,6 +46,7 @@ from modem.bandwidth_adaptation import fixed_bandwidth
 from modem.chat_transport import encode_chat_transmission
 from radio.hamlib_control import HamlibController
 from radio.bundled_hamlib import BundledHamlibConfig, BundledHamlibService
+from radio.hamlib_models import list_radio_models
 from radio.device import list_serial_ports
 from util.session_debug_log import SessionDebugLog
 
@@ -57,6 +59,12 @@ FOREGROUND = QColor("#eef5f7")
 MUTED = QColor("#8fa2b3")
 ACCENT = QColor("#47dbc6")
 BLUE = QColor("#68a7ff")
+
+THEMES = {
+    "Dark": ("#0b1016", "#0d141c", "#293846", "#eef5f7", "#8fa2b3", "#47dbc6", "#68a7ff"),
+    "Amber": ("#171108", "#21180b", "#5f4821", "#ffe9bd", "#c4a66a", "#ffb52e", "#ffd166"),
+    "Green": ("#07130c", "#0a1c10", "#255538", "#dfffea", "#80b894", "#35e878", "#8cffad"),
+}
 
 
 class SpectrumWidget(QWidget):
@@ -128,7 +136,8 @@ class WaterfallWidget(QWidget):
 
     def __init__(self, rows: int = 72) -> None:
         super().__init__()
-        self.setMinimumHeight(90)
+        self.setMinimumHeight(42)
+        self.setMaximumHeight(72)
         self._rows = rows
         self._history: np.ndarray | None = None
         self._image: QImage | None = None
@@ -173,9 +182,14 @@ class WaterfallWidget(QWidget):
 class AuroraQtWindow(QMainWindow):
     """Cross-platform Aurora operator window optimized for compact displays."""
 
-    def __init__(self, settings: AppSettings = SETTINGS) -> None:
+    def __init__(
+        self,
+        settings: AppSettings = SETTINGS,
+        preferences: QSettings | None = None,
+    ) -> None:
         super().__init__()
         self.settings = settings
+        self.preferences = preferences or QSettings("N4EAC", "Aurora")
         self.session_log = SessionDebugLog(settings.log_directory, APPLICATION_VERSION)
         self.setWindowTitle("Aurora • Adaptive HF communications")
         self.resize(1_080, 680)
@@ -192,6 +206,7 @@ class AuroraQtWindow(QMainWindow):
         self._hamlib_service: BundledHamlibService | None = None
         self._cat_request_pending = False
         self._receiver_stop = threading.Event()
+        self._radio_models = list_radio_models()
         self._build_ui()
         self._display_timer = QTimer(self)
         self._display_timer.setInterval(200)
@@ -206,10 +221,13 @@ class AuroraQtWindow(QMainWindow):
         self._cat_timer.timeout.connect(self._request_cat_status)
         self._cat_timer.start()
         self._refresh_audio()
+        self._restore_preferences()
         self._append("[READY] Select radio audio input and connect Hamlib rigctld.")
         self._append(f"[LOG] Session debug: {self.session_log.path.name}")
 
     def _build_ui(self) -> None:
+        self._build_setup_dialog()
+        self._build_menus()
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
@@ -225,147 +243,295 @@ class AuroraQtWindow(QMainWindow):
         header.addWidget(self.radio_badge)
         outer.addLayout(header)
 
-        split = QSplitter(Qt.Horizontal)
-        split.setChildrenCollapsible(False)
-        split.addWidget(self._build_controls())
-        split.addWidget(self._build_workspace())
-        split.setSizes((240, 820))
-        outer.addWidget(split, 1)
-
-        composer = QHBoxLayout()
-        self.message = QLineEdit("CQ CQ from Aurora")
-        self.message.returnPressed.connect(self._transmit)
-        composer.addWidget(self.message, 1)
-        self.transmit_button = QPushButton("TRANSMIT")
-        self.transmit_button.setObjectName("primary")
-        self.transmit_button.setEnabled(False)
-        self.transmit_button.clicked.connect(self._transmit)
-        composer.addWidget(self.transmit_button)
-        outer.addLayout(composer)
-
-    def _build_controls(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("panel")
-        panel.setMinimumWidth(205)
-        panel.setMaximumWidth(280)
-        layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("SIGNAL CONTROLS"))
-        form = QFormLayout()
-        self.bandwidth = QComboBox()
-        self.bandwidth.addItems(("AUTO", "500 Hz", "2.3 kHz", "2.8 kHz"))
-        form.addRow("Bandwidth", self.bandwidth)
-        self.frequency = QSpinBox()
-        self.frequency.setRange(100, 3_000)
-        self.frequency.setSingleStep(100)
-        self.frequency.setValue(1_500)
-        self.frequency.setSuffix(" Hz")
-        self.frequency.valueChanged.connect(self._frequency_changed)
-        form.addRow("TX/RX", self.frequency)
-        self.callsign = QLineEdit("N4EAC")
-        form.addRow("Callsign", self.callsign)
-        self.grid = QLineEdit()
-        form.addRow("Grid", self.grid)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("RADIO AUDIO"))
-        self.input_device = QComboBox()
-        self.output_device = QComboBox()
-        layout.addWidget(self.input_device)
-        layout.addWidget(self.output_device)
-        self.rx_button = QPushButton("START SPECTRUM RX")
-        self.rx_button.clicked.connect(self._toggle_receiver)
-        layout.addWidget(self.rx_button)
-        layout.addSpacing(8)
-        layout.addWidget(QLabel("HAMLIB CAT"))
-        cat_form = QFormLayout()
-        self.hamlib_host = QLineEdit("127.0.0.1")
-        self.external_hamlib = QCheckBox("Use external rigctld")
-        self.hamlib_model = QSpinBox()
-        self.hamlib_model.setRange(1, 99_999)
-        self.hamlib_model.setValue(1)
-        self.cat_device = QComboBox()
-        self.cat_device.setEditable(True)
-        self.cat_device.addItems(port.device for port in list_serial_ports())
-        self.cat_baud = QComboBox()
-        self.cat_baud.addItems(("4800", "9600", "19200", "38400", "57600", "115200"))
-        self.cat_baud.setCurrentText("9600")
-        self.hamlib_port = QSpinBox()
-        self.hamlib_port.setRange(1, 65_535)
-        self.hamlib_port.setValue(4_532)
+        summary = QFrame()
+        summary.setObjectName("panel")
+        summary_layout = QVBoxLayout(summary)
+        operating_row = QHBoxLayout()
         self.radio_frequency = QSpinBox()
         self.radio_frequency.setRange(100_000, 2_000_000_000)
         self.radio_frequency.setValue(14_074_000)
         self.radio_frequency.setSuffix(" Hz")
         self.radio_mode = QComboBox()
         self.radio_mode.addItems(("USB-D", "USB", "LSB-D", "LSB", "CW", "CW-R"))
-        cat_form.addRow("Model #", self.hamlib_model)
+        self.callsign_display = QLabel("N4EAC")
+        self.callsign_display.setObjectName("value")
+        self.bandwidth = QComboBox()
+        self.bandwidth.addItems(("AUTO", "500 Hz", "2.3 kHz", "2.8 kHz"))
+        for label, widget in (
+            ("Frequency", self.radio_frequency),
+            ("Mode", self.radio_mode),
+            ("Station", self.callsign_display),
+            ("Bandwidth", self.bandwidth),
+        ):
+            operating_row.addWidget(QLabel(label))
+            operating_row.addWidget(widget)
+        operating_row.addStretch()
+        summary_layout.addLayout(operating_row)
+        diagnostic_row = QHBoxLayout()
+        self.diagnostics: dict[str, QLabel] = {}
+        for name, initial in (
+            ("Sync", "SEARCHING"), ("SNR", "-- dB"), ("Offset", "-- Hz"),
+            ("Timing", "--"), ("CRC", "WAITING"), ("FEC", "IDLE"),
+        ):
+            value = QLabel(f"{name}: {initial}")
+            value.setObjectName("value")
+            self.diagnostics[name] = value
+            diagnostic_row.addWidget(value)
+        diagnostic_row.addStretch()
+        summary_layout.addLayout(diagnostic_row)
+        outer.addWidget(summary)
+
+        outer.addWidget(self._build_workspace(), 1)
+
+        composer = QHBoxLayout()
+        self.message = QLineEdit()
+        self.message.setPlaceholderText("Type a message and press Enter to send")
+        self.message.returnPressed.connect(self._transmit)
+        composer.addWidget(self.message, 1)
+        self.transmit_button = QPushButton("SEND")
+        self.transmit_button.setObjectName("primary")
+        self.transmit_button.setEnabled(False)
+        self.transmit_button.clicked.connect(self._transmit)
+        composer.addWidget(self.transmit_button)
+        outer.addLayout(composer)
+
+        self._build_message_docks()
+
+    def _build_setup_dialog(self) -> None:
+        self.setup_dialog = QDialog(self)
+        self.setup_dialog.setWindowTitle("Aurora Setup")
+        self.setup_dialog.resize(560, 430)
+        dialog_layout = QVBoxLayout(self.setup_dialog)
+        tabs = QTabWidget()
+        dialog_layout.addWidget(tabs)
+
+        station_tab = QWidget()
+        station_form = QFormLayout(station_tab)
+        self.callsign = QLineEdit("N4EAC")
+        self.callsign.textChanged.connect(self._station_identity_changed)
+        self.grid = QLineEdit()
+        station_form.addRow("Callsign", self.callsign)
+        station_form.addRow("Grid", self.grid)
+        tabs.addTab(station_tab, "Station ID")
+
+        cat_tab = QWidget()
+        cat_layout = QVBoxLayout(cat_tab)
+        cat_form = QFormLayout()
+        self.hamlib_model = QComboBox()
+        for model in self._radio_models:
+            self.hamlib_model.addItem(model.display_name, model.model_id)
+        default_model = self.hamlib_model.findData(3073)
+        if default_model >= 0:
+            self.hamlib_model.setCurrentIndex(default_model)
+        self.cat_device = QComboBox()
+        self.cat_device.setEditable(True)
+        self.cat_device.addItems(port.device for port in list_serial_ports())
+        self.cat_baud = QComboBox()
+        self.cat_baud.addItems(("4800", "9600", "19200", "38400", "57600", "115200"))
+        self.cat_baud.setCurrentText("9600")
+        self.external_hamlib = QCheckBox("Use external rigctld")
+        self.hamlib_host = QLineEdit("127.0.0.1")
+        self.hamlib_port = QSpinBox()
+        self.hamlib_port.setRange(1, 65_535)
+        self.hamlib_port.setValue(4_532)
+        cat_form.addRow("Radio", self.hamlib_model)
         cat_form.addRow("CAT device", self.cat_device)
         cat_form.addRow("Baud", self.cat_baud)
         cat_form.addRow(self.external_hamlib)
         cat_form.addRow("External host", self.hamlib_host)
-        cat_form.addRow("Service port", self.hamlib_port)
-        cat_form.addRow("Radio", self.radio_frequency)
-        cat_form.addRow("Mode", self.radio_mode)
-        layout.addLayout(cat_form)
+        cat_form.addRow("rigctld port", self.hamlib_port)
+        cat_layout.addLayout(cat_form)
         self.cat_button = QPushButton("CONNECT HAMLIB")
         self.cat_button.clicked.connect(self._toggle_cat)
-        layout.addWidget(self.cat_button)
+        cat_layout.addWidget(self.cat_button)
         self.apply_radio_button = QPushButton("APPLY FREQUENCY / MODE")
         self.apply_radio_button.setEnabled(False)
         self.apply_radio_button.clicked.connect(self._apply_radio_settings)
-        layout.addWidget(self.apply_radio_button)
-        self.ptt_arm = QCheckBox("Arm PTT control")
+        cat_layout.addWidget(self.apply_radio_button)
+        self.ptt_arm = QCheckBox("PTT Control")
+        self.ptt_arm.setChecked(True)
         self.ptt_arm.toggled.connect(self._ptt_arm_changed)
-        layout.addWidget(self.ptt_arm)
-        layout.addSpacing(8)
-        layout.addWidget(QLabel("DIAGNOSTICS"))
-        self.diagnostics: dict[str, QLabel] = {}
-        diagnostic_form = QFormLayout()
-        for name, initial in (
-            ("Sync", "SEARCHING"),
-            ("SNR", "-- dB"),
-            ("Offset", "-- Hz"),
-            ("Timing", "--"),
-            ("CRC", "WAITING"),
-            ("FEC", "IDLE"),
-        ):
-            value = QLabel(initial)
-            value.setObjectName("value")
-            self.diagnostics[name] = value
-            diagnostic_form.addRow(name, value)
-        layout.addLayout(diagnostic_form)
-        layout.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setMinimumWidth(215)
-        scroll.setMaximumWidth(290)
-        scroll.setWidget(panel)
-        return scroll
+        cat_layout.addWidget(self.ptt_arm)
+        cat_layout.addStretch()
+        tabs.addTab(cat_tab, "CAT Control")
+
+        audio_tab = QWidget()
+        audio_layout = QVBoxLayout(audio_tab)
+        audio_form = QFormLayout()
+        self.input_device = QComboBox()
+        self.output_device = QComboBox()
+        audio_form.addRow("Radio input", self.input_device)
+        audio_form.addRow("Radio output", self.output_device)
+        audio_layout.addLayout(audio_form)
+        refresh = QPushButton("REFRESH AUDIO DEVICES")
+        refresh.clicked.connect(self._refresh_audio)
+        audio_layout.addWidget(refresh)
+        self.rx_button = QPushButton("START SPECTRUM RX")
+        self.rx_button.clicked.connect(self._toggle_receiver)
+        audio_layout.addWidget(self.rx_button)
+        audio_layout.addStretch()
+        tabs.addTab(audio_tab, "Audio")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.setup_dialog.accept)
+        dialog_layout.addWidget(buttons)
+
+    def _build_menus(self) -> None:
+        file_menu = self.menuBar().addMenu("File")
+        exit_action = QAction("Exit", self)
+        exit_action.setMenuRole(QAction.NoRole)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        setup_menu = self.menuBar().addMenu("Setup")
+        setup_action = QAction("Setup…", self)
+        setup_action.setMenuRole(QAction.NoRole)
+        setup_action.triggered.connect(self.setup_dialog.show)
+        setup_menu.addAction(setup_action)
+
+        view_menu = self.menuBar().addMenu("Theme")
+        for theme_name in THEMES:
+            action = QAction(theme_name, self)
+            action.triggered.connect(
+                lambda checked=False, name=theme_name: self._apply_theme(name)
+            )
+            view_menu.addAction(action)
+
+        help_menu = self.menuBar().addMenu("About")
+        about_action = QAction("About Aurora", self)
+        about_action.setMenuRole(QAction.NoRole)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _build_message_docks(self) -> None:
+        self.history = QTextEdit()
+        self.history.setReadOnly(True)
+        self.messages_dock = QDockWidget("Messages", self)
+        self.messages_dock.setObjectName("messagesDock")
+        self.messages_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.messages_dock.setWidget(self.history)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.messages_dock)
+
+        self.other_signals = QTableWidget(0, 3)
+        self.other_signals.setHorizontalHeaderLabels(("Frequency", "Callsign", "Message"))
+        self.other_signals.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.other_signals_dock = QDockWidget("Other Signals", self)
+        self.other_signals_dock.setObjectName("otherSignalsDock")
+        self.other_signals_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.other_signals_dock.setWidget(self.other_signals)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.other_signals_dock)
 
     def _build_workspace(self) -> QWidget:
         workspace = QWidget()
         layout = QVBoxLayout(workspace)
-        layout.setContentsMargins(6, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        tuning = QHBoxLayout()
+        tuning.addWidget(QLabel("Audio TX/RX"))
+        self.frequency = QSpinBox()
+        self.frequency.setRange(100, 3_000)
+        self.frequency.setSingleStep(100)
+        self.frequency.setValue(1_500)
+        self.frequency.setSuffix(" Hz")
+        self.frequency.valueChanged.connect(self._frequency_changed)
+        tuning.addWidget(self.frequency)
+        tuning.addStretch()
+        layout.addLayout(tuning)
         layout.addWidget(QLabel("SIGNAL SPECTRUM • click to tune"))
         self.spectrum = SpectrumWidget()
         self.spectrum.frequency_selected.connect(self.frequency.setValue)
-        layout.addWidget(self.spectrum, 2)
-        layout.addWidget(QLabel("SIGNAL HISTORY"))
+        layout.addWidget(self.spectrum, 1)
+        layout.addWidget(QLabel("WATERFALL"))
         self.waterfall = WaterfallWidget()
-        layout.addWidget(self.waterfall, 2)
-        self.tabs = QTabWidget()
-        self.history = QTextEdit()
-        self.history.setReadOnly(True)
-        self.tabs.addTab(self.history, "Messages")
-        self.other_signals = QTableWidget(0, 3)
-        self.other_signals.setHorizontalHeaderLabels(("Frequency", "Callsign", "Message"))
-        self.other_signals.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.tabs.addTab(self.other_signals, "Other Signals")
-        layout.addWidget(self.tabs, 2)
+        layout.addWidget(self.waterfall)
         return workspace
 
     def _frequency_changed(self, frequency_hz: int) -> None:
         self.spectrum.set_frequency(frequency_hz)
+
+    def _station_identity_changed(self, callsign: str) -> None:
+        self.callsign_display.setText(callsign.strip().upper() or "NOT SET")
+
+    def _set_diagnostic(self, name: str, value: str) -> None:
+        self.diagnostics[name].setText(f"{name}: {value}")
+
+    def _apply_theme(self, name: str) -> None:
+        """Apply and remember one of Aurora's operator display themes."""
+        global BACKGROUND, FIELD, BORDER, FOREGROUND, MUTED, ACCENT, BLUE
+        selected = name if name in THEMES else "Dark"
+        colors = THEMES[selected]
+        BACKGROUND, FIELD, BORDER, FOREGROUND, MUTED, ACCENT, BLUE = map(QColor, colors)
+        QApplication.instance().setStyleSheet(_stylesheet(selected))
+        self.preferences.setValue("appearance/theme", selected)
+        self.spectrum.update()
+        self.waterfall.update()
+
+    def _show_about(self) -> None:
+        QMessageBox.information(
+            self,
+            "About Aurora",
+            f"{APPLICATION_VERSION}\n\nby N4EAC, EDUARDO",
+            QMessageBox.Ok,
+        )
+
+    @staticmethod
+    def _stored_bool(value: object, default: bool) -> bool:
+        if value is None:
+            return default
+        return str(value).lower() in {"1", "true", "yes"}
+
+    def _restore_preferences(self) -> None:
+        """Restore operator, radio, audio, theme, geometry, and dock settings."""
+        p = self.preferences
+        self.callsign.setText(str(p.value("station/callsign", "N4EAC")))
+        self.grid.setText(str(p.value("station/grid", "")))
+        self.frequency.setValue(int(p.value("signal/audio_frequency_hz", 1_500)))
+        self.bandwidth.setCurrentText(str(p.value("signal/bandwidth", "AUTO")))
+        self.radio_frequency.setValue(int(p.value("radio/frequency_hz", 14_074_000)))
+        self.radio_mode.setCurrentText(str(p.value("radio/mode", "USB-D")))
+        model_index = self.hamlib_model.findData(int(p.value("cat/model_id", 3073)))
+        if model_index >= 0:
+            self.hamlib_model.setCurrentIndex(model_index)
+        self.cat_device.setCurrentText(str(p.value("cat/device", self.cat_device.currentText())))
+        self.cat_baud.setCurrentText(str(p.value("cat/baud", "9600")))
+        self.external_hamlib.setChecked(self._stored_bool(p.value("cat/external"), False))
+        self.hamlib_host.setText(str(p.value("cat/host", "127.0.0.1")))
+        self.hamlib_port.setValue(int(p.value("cat/port", 4_532)))
+        self.ptt_arm.setChecked(self._stored_bool(p.value("cat/ptt_control"), True))
+        self.input_device.setCurrentText(str(p.value("audio/input", self.input_device.currentText())))
+        self.output_device.setCurrentText(str(p.value("audio/output", self.output_device.currentText())))
+        self._apply_theme(str(p.value("appearance/theme", "Dark")))
+        geometry = p.value("window/geometry")
+        dock_state = p.value("window/dock_state")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        if dock_state is not None:
+            self.restoreState(dock_state)
+
+    def _save_preferences(self) -> None:
+        """Persist all operator-adjustable settings and window layout."""
+        p = self.preferences
+        values = {
+            "station/callsign": self.callsign.text().strip().upper(),
+            "station/grid": self.grid.text().strip().upper(),
+            "signal/audio_frequency_hz": self.frequency.value(),
+            "signal/bandwidth": self.bandwidth.currentText(),
+            "radio/frequency_hz": self.radio_frequency.value(),
+            "radio/mode": self.radio_mode.currentText(),
+            "cat/model_id": self.hamlib_model.currentData(),
+            "cat/device": self.cat_device.currentText(),
+            "cat/baud": self.cat_baud.currentText(),
+            "cat/external": self.external_hamlib.isChecked(),
+            "cat/host": self.hamlib_host.text().strip(),
+            "cat/port": self.hamlib_port.value(),
+            "cat/ptt_control": self.ptt_arm.isChecked(),
+            "audio/input": self.input_device.currentText(),
+            "audio/output": self.output_device.currentText(),
+            "window/geometry": self.saveGeometry(),
+            "window/dock_state": self.saveState(),
+        }
+        for key, value in values.items():
+            p.setValue(key, value)
+        p.sync()
 
     def _append(self, text: str) -> None:
         self.history.append(text)
@@ -407,7 +573,7 @@ class AuroraQtWindow(QMainWindow):
         self.spectrum.set_frame(frame)
         self.waterfall.add_frame(frame)
         peak = float(np.max(np.abs(display_samples)))
-        self.diagnostics["SNR"].setText(f"Input peak {peak:.3f}")
+        self._set_diagnostic("SNR", f"Input {peak:.3f}")
 
     def _selected_mode(self):
         selection = self.bandwidth.currentText()
@@ -420,6 +586,8 @@ class AuroraQtWindow(QMainWindow):
         return fixed_bandwidth(bandwidth).mode
 
     def _refresh_audio(self) -> None:
+        previous_input = self.input_device.currentText()
+        previous_output = self.output_device.currentText()
         try:
             inputs = list_audio_devices("input")
             outputs = list_audio_devices("output")
@@ -429,11 +597,15 @@ class AuroraQtWindow(QMainWindow):
         self._input_devices = {f"{item.index}: {item.name}": item for item in inputs}
         self.input_device.clear()
         self.input_device.addItems(self._input_devices)
+        if previous_input in self._input_devices:
+            self.input_device.setCurrentText(previous_input)
         selected_input = next(iter(self._input_devices.values()), None)
         compatible = () if selected_input is None else compatible_outputs(selected_input, outputs)
         self._output_devices = {f"{item.index}: {item.name}": item for item in compatible}
         self.output_device.clear()
         self.output_device.addItems(self._output_devices)
+        if previous_output in self._output_devices:
+            self.output_device.setCurrentText(previous_output)
 
     def _toggle_receiver(self) -> None:
         if self._stream is not None:
@@ -511,10 +683,10 @@ class AuroraQtWindow(QMainWindow):
                 self.add_other_signal(
                     event.frequency_hz, event.message.callsign, event.message.text
                 )
-            self.diagnostics["Sync"].setText("LOCKED")
-            self.diagnostics["Offset"].setText(f"{event.frequency_offset_hz:+.2f} Hz")
-            self.diagnostics["CRC"].setText("PASS")
-            self.diagnostics["FEC"].setText("CORRECTED")
+            self._set_diagnostic("Sync", "LOCKED")
+            self._set_diagnostic("Offset", f"{event.frequency_offset_hz:+.2f} Hz")
+            self._set_diagnostic("CRC", "PASS")
+            self._set_diagnostic("FEC", "CORRECTED")
         self._poll_cat_events()
 
     def _toggle_cat(self) -> None:
@@ -525,7 +697,7 @@ class AuroraQtWindow(QMainWindow):
         external = self.external_hamlib.isChecked()
         host = self.hamlib_host.text() if external else "127.0.0.1"
         port = self.hamlib_port.value()
-        model = self.hamlib_model.value()
+        model = int(self.hamlib_model.currentData())
         device = self.cat_device.currentText()
         baud = int(self.cat_baud.currentText())
 
@@ -554,7 +726,6 @@ class AuroraQtWindow(QMainWindow):
         service = self._hamlib_service
         self._hamlib = None
         self._hamlib_service = None
-        self.ptt_arm.setChecked(False)
         if controller is not None:
             try:
                 controller.set_ptt(False)
@@ -616,7 +787,7 @@ class AuroraQtWindow(QMainWindow):
         self.radio_mode.setCurrentText(mode)
         state = "TX" if ptt else "RX"
         self.radio_badge.setText(f"HAMLIB {state} • {frequency / 1_000_000:.6f} MHz")
-        self.diagnostics["Sync"].setText(f"CAT {state}")
+        self._set_diagnostic("Sync", f"CAT {state}")
         self.session_log.record(
             "HAMLIB_STATUS",
             frequency_hz=frequency,
@@ -642,7 +813,8 @@ class AuroraQtWindow(QMainWindow):
                 self._show_cat_status(values[2])
                 source = "external" if self._hamlib_service is None else "bundled"
                 self._append(
-                    f"[CAT] {source.title()} Hamlib connected; PTT remains disarmed."
+                    f"[CAT] {source.title()} Hamlib connected; PTT control "
+                    f"{'enabled' if self.ptt_arm.isChecked() else 'disabled'}."
                 )
             elif kind == "status":
                 self._show_cat_status(values[0])
@@ -706,6 +878,7 @@ class AuroraQtWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._save_preferences()
         self._display_timer.stop()
         self._event_timer.stop()
         self._cat_timer.stop()
@@ -717,25 +890,28 @@ class AuroraQtWindow(QMainWindow):
         event.accept()
 
 
-def _stylesheet() -> str:
-    return """
-        QWidget { background: #0b1016; color: #eef5f7; font-size: 12px; }
-        QFrame#panel { background: #121a23; border: 1px solid #293846; border-radius: 6px; }
-        QLabel#title { font-size: 25px; font-weight: 700; }
-        QLabel#badge { background: #18232e; color: #f5bd4f; padding: 7px 11px; border-radius: 4px; }
-        QLabel#value { color: #47dbc6; font-family: monospace; font-weight: 600; }
-        QLineEdit, QSpinBox, QComboBox, QTextEdit, QTableWidget { background: #0d141c; border: 1px solid #293846; padding: 5px; }
-        QPushButton { background: #18232e; border: 1px solid #293846; padding: 7px; border-radius: 4px; }
-        QPushButton:hover { border-color: #47dbc6; }
-        QPushButton#primary { background: #1d756c; border-color: #47dbc6; font-weight: 700; }
-        QTabBar::tab { background: #121a23; padding: 7px 12px; }
-        QTabBar::tab:selected { color: #47dbc6; border-bottom: 2px solid #47dbc6; }
+def _stylesheet(theme_name: str = "Dark") -> str:
+    background, field, border, foreground, muted, accent, blue = THEMES[theme_name]
+    return f"""
+        QWidget {{ background: {background}; color: {foreground}; font-size: 12px; }}
+        QFrame#panel {{ background: {field}; border: 1px solid {border}; border-radius: 6px; }}
+        QLabel#title {{ font-size: 25px; font-weight: 700; }}
+        QLabel#badge {{ background: {field}; color: {blue}; padding: 7px 11px; border-radius: 4px; }}
+        QLabel#value {{ color: {accent}; font-family: monospace; font-weight: 600; }}
+        QLineEdit, QSpinBox, QComboBox, QTextEdit, QTableWidget {{ background: {field}; border: 1px solid {border}; padding: 5px; }}
+        QPushButton {{ background: {field}; border: 1px solid {border}; padding: 7px; border-radius: 4px; }}
+        QPushButton:hover {{ border-color: {accent}; }}
+        QPushButton#primary {{ background: {border}; border-color: {accent}; font-weight: 700; }}
+        QTabBar::tab {{ background: {field}; padding: 7px 12px; }}
+        QTabBar::tab:selected {{ color: {accent}; border-bottom: 2px solid {accent}; }}
     """
 
 
 def run(settings: AppSettings = SETTINGS) -> None:
     """Start the responsive Qt Aurora interface."""
     application = QApplication.instance() or QApplication(sys.argv)
+    application.setApplicationName("Aurora")
+    application.setOrganizationName("N4EAC")
     application.setStyle("Fusion")
     application.setStyleSheet(_stylesheet())
     window = AuroraQtWindow(settings)
