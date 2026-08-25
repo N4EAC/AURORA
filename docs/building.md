@@ -15,6 +15,11 @@ cross-compiling these installers is not supported.
 
 Release builds should not skip tests. Generated output is written beneath
 `dist/`; temporary output and isolated build environments are ignored by Git.
+The selected version is embedded in the application, About dialog, session
+log, native package metadata, and installer filename. Invalid semantic versions
+stop the build before packaging.
+PyInstaller caches are isolated beneath `build/` so packaging does not depend
+on or modify a user-level PyInstaller cache.
 
 ## macOS
 

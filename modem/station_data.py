@@ -8,9 +8,14 @@ import re
 import struct
 
 from dsp.core import EncodedTransmission, encode_payload
-from dsp.framing import Frame
+from dsp.framing import Frame, build_frame
 from modem.ax25 import Ax25Address, Ax25Error, Ax25UiFrame, decode_ui_frame, encode_ui_frame
 from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
+from modem.bootstrap import (
+    AirTransmission,
+    FRAME_TYPE_AX25_STATION,
+    build_air_transmission,
+)
 
 
 AURORA_FLAG_AX25 = 0x01
@@ -163,6 +168,30 @@ def encode_station_transmission(
         flags=AURORA_FLAG_AX25,
         modulation=mode.modulation,
         interleaver_columns=mode.interleaver_columns,
+    )
+
+
+def encode_station_air_transmission(
+    data: StationData,
+    *,
+    destination: str = "AURORA",
+    frame_id: int,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
+) -> AirTransmission:
+    """Build bootstrapped AX.25 station data without chat text."""
+    native = build_station_ax25(data, destination)
+    payload = encode_payload(
+        native,
+        flags=AURORA_FLAG_AX25,
+        modulation=mode.modulation,
+        interleaver_columns=mode.interleaver_columns,
+    )
+    return build_air_transmission(
+        payload,
+        payload_size=len(build_frame(native, AURORA_FLAG_AX25)),
+        frame_type=FRAME_TYPE_AX25_STATION,
+        frame_id=frame_id,
+        mode=mode,
     )
 
 

@@ -4,8 +4,11 @@ from modem.chat_transport import (
     AURORA_FLAG_CHAT,
     ChatMessage,
     decode_chat_transport,
+    encode_chat_air_transmission,
     encode_chat_transmission,
 )
+from modem.bootstrap import AirTransmission, BootstrapHeader
+from modem.reception_report import ReceptionReport
 
 from modem.mode_definition import (
     AURORA_2300_MODE,
@@ -25,8 +28,12 @@ __all__ = [
     "AURORA_2800_MODE",
     "AURORA_BANDWIDTH_MODES",
     "AURORA_SINGLE_CARRIER_RESEARCH_MODE",
+    "AirTransmission",
+    "BootstrapHeader",
     "ChatMessage",
     "ModeDefinition",
+    "ReceptionReport",
     "decode_chat_transport",
+    "encode_chat_air_transmission",
     "encode_chat_transmission",
 ]

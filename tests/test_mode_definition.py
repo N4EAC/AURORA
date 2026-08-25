@@ -15,7 +15,7 @@ class ModeDefinitionTests(unittest.TestCase):
         self.assertEqual((mode.fec_rate_numerator, mode.fec_rate_denominator), (1, 2))
         self.assertTrue(mode.fec_terminated)
         self.assertEqual(mode.interleaver_columns, 8)
-        self.assertFalse(mode.interleaver_geometry_signaled)
+        self.assertTrue(mode.interleaver_geometry_signaled)
         self.assertEqual(mode.audio_sample_rate, 12_000)
         self.assertEqual(mode.audio_carrier_hz, 1_500.0)
         self.assertEqual(mode.pulse_shape, "ofdm")

@@ -23,6 +23,7 @@ fixtures.
 | Cyclic prefix | 64 samples, 5.333 ms |
 | Total OFDM block | 320 samples, 26.667 ms |
 | Training | Two repeated deterministic OFDM blocks |
+| Payload pilots | One deterministic block after every 8 data blocks |
 | Payload constellation | BPSK |
 | FEC | Rate-1/2, constraint-length-7 convolutional code |
 | Interleaver | One row per profile's OFDM data block |
@@ -48,16 +49,28 @@ and is shown in diagnostics.
 
 ## Frame construction
 
-The transmitter applies the existing Aurora framing, CRC, scrambling, FEC, and
-interleaving pipeline. The resulting BPSK values are filled across the active
-subcarriers selected by the bandwidth profile. A final partial OFDM block is
-zero padded.
+The transmitter applies Aurora framing, CRC, scrambling, FEC, and interleaving
+separately to a fixed bootstrap and its variable-length payload. Their BPSK
+values are concatenated across the active subcarriers. A final partial OFDM
+block is zero padded; native chat itself is not padded.
+
+The bootstrap signals frame type, bandwidth, constellation, FEC profile,
+interleaver columns, exact protected payload byte/symbol counts, and frame ID.
+Native chat, AX.25 station data, and reception reports are distinct payload
+types. See [the native transport definition](native_transport.md).
 
 Two identical training blocks precede the payload. They provide bounded frame
 acquisition, residual carrier-offset measurement, and a complex channel gain
 estimate for each active subcarrier. The receiver removes the cyclic prefix,
 performs an FFT, equalizes each carrier independently, and returns constellation
 values to the existing soft decoder.
+
+A deterministic pilot block follows every eight payload data blocks except
+after the final group. Each pilot refreshes the per-carrier channel estimate.
+The receiver measures phase slope between pilot estimates as sample-timing
+drift and uses the refreshed complex channel response to correct subsequent
+data while drift remains inside the cyclic-prefix margin. This adds at most
+12.5% pilot airtime for long frames.
 
 Candidate thresholds are calibrated by occupied-bandwidth profile: 0.45 at
 500 Hz, 0.40 at 2.3 kHz, and 0.35 at 2.8 kHz. Wider acoustic signals experience
@@ -66,11 +79,14 @@ creates a candidate; a received message is accepted and emitted only after FEC
 decoding and CRC validation. A 100-seed matched noise-only screen produced a
 maximum training metric below 0.14 for every profile.
 
-## Unresolved protocol work
+## Remaining protocol work
 
-Aurora does not yet transmit a mode identifier, payload geometry, constellation
-selection, or interleaver geometry. The receiver currently knows the expected
-payload length during development tests. Before operational use, Aurora still
-requires a robust bootstrap header, unknown-length framing, timing-drift
-tracking, pilot strategy, transmitter-linearity limits, and controlled HF radio
-validation.
+The protected bootstrap and native chat receiver now provide profile
+identification, exact variable payload geometry, constellation/FEC selection,
+interleaver signaling, and frame identifiers. Before operational use, Aurora
+still requires controlled HF radio validation and stronger weak-signal
+bootstrap performance. Periodic payload pilots, bounded timing-drift tracking,
+and enforced computer-audio linearity limits are implemented, but their limits
+still require physical sound-interface and transmitter measurements. See the
+[transmitter requirements](transmitter_requirements.md) and
+[bootstrap characterization](bootstrap_characterization.md).

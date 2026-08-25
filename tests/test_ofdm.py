@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from dsp.audio_channel import AudioChannelConfig, apply_audio_channel
 from dsp.core import decode_soft_symbols, encode_payload
 from dsp.ofdm import (
     DEFAULT_OFDM_CONFIG,
@@ -134,6 +135,30 @@ class OfdmWaveformTests(unittest.TestCase):
             if candidate.diagnostics.symbol_start_sample == 211
         ]
         self.assertEqual(decoded[0].payload, b"Aurora timing")
+
+    def test_periodic_pilots_track_payload_clock_drift(self) -> None:
+        symbols = np.where(np.arange(2_400) % 3, 1.0, -1.0)
+        audio = modulate_audio(symbols, AURORA_500_MODE)
+        impaired = apply_audio_channel(
+            audio,
+            AudioChannelConfig(clock_error_ppm=200.0),
+            np.random.default_rng(25),
+        )
+        result = demodulate_audio(impaired, len(symbols), AURORA_500_MODE)
+        decisions = np.where(result.symbols.real >= 0.0, 1.0, -1.0)
+        self.assertTrue(np.array_equal(decisions, symbols))
+        self.assertGreater(result.diagnostics.timing_offset_samples, 0.5)
+
+    def test_frame_geometry_accounts_for_periodic_pilots(self) -> None:
+        config = config_for_mode(AURORA_500_MODE)
+        symbols = len(config.data_subcarriers) * (config.pilot_interval_blocks + 1)
+        without_pilot = (
+            config.training_symbol_count + config.pilot_interval_blocks + 1
+        ) * config.block_samples + config.shaping_filter_taps - 1
+        self.assertEqual(
+            frame_sample_count(symbols, config),
+            without_pilot + config.block_samples,
+        )
 
 
 if __name__ == "__main__":

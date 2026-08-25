@@ -55,8 +55,6 @@ class ModeDefinition:
             raise ValueError("Pulse roll-off must be between zero and one")
         if self.pulse_span_symbols <= 0 or self.pulse_span_symbols % 2:
             raise ValueError("Pulse span must be a positive even symbol count")
-        if self.interleaver_geometry_signaled:
-            raise ValueError("Aurora has no signaling protocol for mode geometry")
         if self.waveform not in {"single_carrier", "ofdm"}:
             raise ValueError("Unsupported Aurora waveform")
         if self.occupied_bandwidth_hz not in {500, 2_300, 2_800}:
@@ -101,6 +99,7 @@ AURORA_500_MODE = ModeDefinition(
     waveform="ofdm",
     occupied_bandwidth_hz=500,
     ofdm_edge_subcarrier=4,
+    interleaver_geometry_signaled=True,
 )
 
 

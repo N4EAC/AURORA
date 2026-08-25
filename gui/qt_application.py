@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import queue
+import secrets
 import threading
 
 import numpy as np
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -37,21 +39,28 @@ from PySide6.QtWidgets import (
 from config import SETTINGS, AppSettings
 from audio.buffer import AudioBuffer
 from audio.device import compatible_outputs, list_audio_devices
-from audio.multichannel_receiver import MultichannelAudioReceiver, mode_at_frequency
+from audio.multichannel_receiver import (
+    MultichannelAudioReceiver,
+    audio_center_limits,
+    mode_at_frequency,
+)
 from audio.playback import condition_playback, play_audio, stop_playback
 from audio.streaming import AudioInputStream, AudioStreamStatus
 from dsp.spectrum import SpectrumFrame, compute_spectrum
+from dsp.transmit_quality import validate_transmit_audio
 from dsp.waveform import modulate_audio
 from modem.bandwidth_adaptation import fixed_bandwidth
-from modem.chat_transport import encode_chat_transmission
+from modem.chat_transport import encode_chat_air_transmission
+from modem.message_templates import CANNED_MESSAGES, expand_message_template
+from modem.station_data import StationData, encode_station_air_transmission
 from radio.hamlib_control import HamlibController
 from radio.bundled_hamlib import BundledHamlibConfig, BundledHamlibService
 from radio.hamlib_models import list_radio_models
 from radio.device import list_serial_ports
 from util.session_debug_log import SessionDebugLog
+from util.application_version import APPLICATION_VERSION
 
 
-APPLICATION_VERSION = "0.1.0-dev"
 BACKGROUND = QColor("#0b1016")
 FIELD = QColor("#0d141c")
 BORDER = QColor("#293846")
@@ -257,6 +266,7 @@ class AuroraQtWindow(QMainWindow):
         self.callsign_display.setObjectName("value")
         self.bandwidth = QComboBox()
         self.bandwidth.addItems(("AUTO", "500 Hz", "2.3 kHz", "2.8 kHz"))
+        self.bandwidth.currentTextChanged.connect(self._bandwidth_changed)
         for label, widget in (
             ("Frequency", self.radio_frequency),
             ("Mode", self.radio_mode),
@@ -282,8 +292,13 @@ class AuroraQtWindow(QMainWindow):
         outer.addWidget(summary)
 
         outer.addWidget(self._build_workspace(), 1)
+        self._bandwidth_changed(self.bandwidth.currentText())
 
         composer = QHBoxLayout()
+        self.canned_message = QComboBox()
+        self.canned_message.addItems(CANNED_MESSAGES)
+        self.canned_message.currentTextChanged.connect(self._select_canned_message)
+        composer.addWidget(self.canned_message)
         self.message = QLineEdit()
         self.message.setPlaceholderText("Type a message and press Enter to send")
         self.message.returnPressed.connect(self._transmit)
@@ -307,11 +322,23 @@ class AuroraQtWindow(QMainWindow):
 
         station_tab = QWidget()
         station_form = QFormLayout(station_tab)
+        self.operator_name = QLineEdit()
         self.callsign = QLineEdit("N4EAC")
         self.callsign.textChanged.connect(self._station_identity_changed)
         self.grid = QLineEdit()
+        self.latitude = QLineEdit()
+        self.longitude = QLineEdit()
+        self.altitude = QLineEdit()
+        station_form.addRow("Name", self.operator_name)
         station_form.addRow("Callsign", self.callsign)
         station_form.addRow("Grid", self.grid)
+        station_form.addRow("Latitude (optional)", self.latitude)
+        station_form.addRow("Longitude (optional)", self.longitude)
+        station_form.addRow("Altitude m (optional)", self.altitude)
+        self.station_data_button = QPushButton("SEND STATION DATA")
+        self.station_data_button.setEnabled(False)
+        self.station_data_button.clicked.connect(self._send_station_data)
+        station_form.addRow(self.station_data_button)
         tabs.addTab(station_tab, "Station ID")
 
         cat_tab = QWidget()
@@ -415,6 +442,17 @@ class AuroraQtWindow(QMainWindow):
         self.other_signals = QTableWidget(0, 3)
         self.other_signals.setHorizontalHeaderLabels(("Frequency", "Callsign", "Message"))
         self.other_signals.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.other_signals.setSelectionBehavior(QTableWidget.SelectRows)
+        self.other_signals.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.other_signals.customContextMenuRequested.connect(
+            self._show_other_signal_menu
+        )
+        self.other_signals.cellDoubleClicked.connect(
+            lambda row, column: self._tune_to_other_signal(row, prepare_contact=True)
+        )
+        self.other_signals.setToolTip(
+            "Right-click a station for tuning options; double-click to prepare contact"
+        )
         self.other_signals_dock = QDockWidget("Other Signals", self)
         self.other_signals_dock.setObjectName("otherSignalsDock")
         self.other_signals_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
@@ -448,8 +486,30 @@ class AuroraQtWindow(QMainWindow):
     def _frequency_changed(self, frequency_hz: int) -> None:
         self.spectrum.set_frequency(frequency_hz)
 
+    def _bandwidth_changed(self, selection: str) -> None:
+        """Keep the complete selected signal inside the radio audio passband."""
+        del selection
+        minimum, maximum = audio_center_limits(self._selected_mode())
+        self.frequency.setRange(minimum, maximum)
+        self.frequency.setToolTip(
+            f"Valid center range for this bandwidth: {minimum}–{maximum} Hz"
+        )
+
     def _station_identity_changed(self, callsign: str) -> None:
         self.callsign_display.setText(callsign.strip().upper() or "NOT SET")
+
+    def _select_canned_message(self, selection: str) -> None:
+        template = CANNED_MESSAGES.get(selection, "")
+        if template:
+            self.message.setText(template)
+            self.message.setFocus()
+
+    def _expanded_message(self) -> str:
+        return expand_message_template(
+            self.message.text(),
+            name=self.operator_name.text(),
+            callsign=self.callsign.text(),
+        )
 
     def _set_diagnostic(self, name: str, value: str) -> None:
         self.diagnostics[name].setText(f"{name}: {value}")
@@ -482,8 +542,12 @@ class AuroraQtWindow(QMainWindow):
     def _restore_preferences(self) -> None:
         """Restore operator, radio, audio, theme, geometry, and dock settings."""
         p = self.preferences
+        self.operator_name.setText(str(p.value("station/name", "")))
         self.callsign.setText(str(p.value("station/callsign", "N4EAC")))
         self.grid.setText(str(p.value("station/grid", "")))
+        self.latitude.setText(str(p.value("station/latitude", "")))
+        self.longitude.setText(str(p.value("station/longitude", "")))
+        self.altitude.setText(str(p.value("station/altitude", "")))
         self.frequency.setValue(int(p.value("signal/audio_frequency_hz", 1_500)))
         self.bandwidth.setCurrentText(str(p.value("signal/bandwidth", "AUTO")))
         self.radio_frequency.setValue(int(p.value("radio/frequency_hz", 14_074_000)))
@@ -511,8 +575,12 @@ class AuroraQtWindow(QMainWindow):
         """Persist all operator-adjustable settings and window layout."""
         p = self.preferences
         values = {
+            "station/name": self.operator_name.text().strip(),
             "station/callsign": self.callsign.text().strip().upper(),
             "station/grid": self.grid.text().strip().upper(),
+            "station/latitude": self.latitude.text().strip(),
+            "station/longitude": self.longitude.text().strip(),
+            "station/altitude": self.altitude.text().strip(),
             "signal/audio_frequency_hz": self.frequency.value(),
             "signal/bandwidth": self.bandwidth.currentText(),
             "radio/frequency_hz": self.radio_frequency.value(),
@@ -540,7 +608,46 @@ class AuroraQtWindow(QMainWindow):
         """Insert an off-frequency CRC-valid decode into the activity list."""
         self.other_signals.insertRow(0)
         for column, value in enumerate((f"{frequency_hz} Hz", callsign, message)):
-            self.other_signals.setItem(0, column, QTableWidgetItem(value))
+            item = QTableWidgetItem(value)
+            item.setData(Qt.UserRole, int(frequency_hz))
+            item.setData(Qt.UserRole + 1, callsign)
+            self.other_signals.setItem(0, column, item)
+
+    def _show_other_signal_menu(self, position) -> None:
+        """Offer safe operator actions for one decoded off-frequency station."""
+        item = self.other_signals.itemAt(position)
+        if item is None:
+            return
+        row = item.row()
+        callsign = self.other_signals.item(row, 1).text()
+        menu = QMenu(self.other_signals)
+        tune = menu.addAction(f"Tune to {callsign}")
+        prepare = menu.addAction(f"Tune and Prepare Contact with {callsign}")
+        selected = menu.exec(self.other_signals.viewport().mapToGlobal(position))
+        if selected == tune:
+            self._tune_to_other_signal(row, prepare_contact=False)
+        elif selected == prepare:
+            self._tune_to_other_signal(row, prepare_contact=True)
+
+    def _tune_to_other_signal(self, row: int, *, prepare_contact: bool) -> None:
+        """Tune to a decoded station and optionally prepare a directed reply."""
+        frequency_item = self.other_signals.item(row, 0)
+        callsign_item = self.other_signals.item(row, 1)
+        if frequency_item is None or callsign_item is None:
+            return
+        frequency = int(frequency_item.data(Qt.UserRole))
+        callsign = callsign_item.text().strip().upper()
+        self.frequency.setValue(frequency)
+        self.messages_dock.raise_()
+        if prepare_contact:
+            self.canned_message.setCurrentText("Custom")
+            self.message.setText(f"{callsign} de <CALL>")
+            self.message.setFocus()
+            self._append(
+                f"[CONTACT] Tuned to {frequency} Hz; reply prepared for {callsign}."
+            )
+        else:
+            self._append(f"[TUNE] Following {callsign} at {frequency} Hz.")
 
     def _receive_audio(self, audio: AudioBuffer) -> None:
         """Fan one radio-audio block out to decoding and latest-frame display."""
@@ -674,17 +781,31 @@ class AuroraQtWindow(QMainWindow):
                 self._append(f"[SPECTRUM RX ERROR] {event}")
                 self._stop_receiver()
                 return
-            if event.frequency_hz == self.frequency.value():
+            if event.message is not None and event.frequency_hz == self.frequency.value():
                 self._append(
                     f"[RX {event.frequency_hz} Hz/{event.message.callsign}] "
                     f"{event.message.text}"
                 )
-            else:
+            elif event.message is not None:
                 self.add_other_signal(
                     event.frequency_hz, event.message.callsign, event.message.text
                 )
+            elif event.station is not None:
+                station = event.station.data
+                location = station.grid or "station update"
+                if station.latitude is not None:
+                    location = f"GPS {station.latitude:+.5f}, {station.longitude:+.5f}"
+                self.add_other_signal(event.frequency_hz, station.callsign, location)
+            elif event.report is not None:
+                report = event.report
+                self.add_other_signal(
+                    event.frequency_hz,
+                    report.reporter,
+                    f"Report #{report.referenced_frame_id}: {report.snr_db:+.1f} dB SNR",
+                )
             self._set_diagnostic("Sync", "LOCKED")
             self._set_diagnostic("Offset", f"{event.frequency_offset_hz:+.2f} Hz")
+            self._set_diagnostic("Timing", f"{event.timing_offset_samples:.2f} samples")
             self._set_diagnostic("CRC", "PASS")
             self._set_diagnostic("FEC", "CORRECTED")
         self._poll_cat_events()
@@ -737,6 +858,7 @@ class AuroraQtWindow(QMainWindow):
         self.cat_button.setText("CONNECT HAMLIB")
         self.cat_button.setEnabled(True)
         self.apply_radio_button.setEnabled(False)
+        self.station_data_button.setEnabled(False)
         self.radio_badge.setText("RADIO DISCONNECTED")
 
     def _request_cat_status(self) -> None:
@@ -778,6 +900,7 @@ class AuroraQtWindow(QMainWindow):
 
     def _ptt_arm_changed(self, armed: bool) -> None:
         self.transmit_button.setEnabled(armed and self._hamlib is not None)
+        self.station_data_button.setEnabled(armed and self._hamlib is not None)
 
     def _show_cat_status(self, status: tuple[int, str, int, bool]) -> None:
         frequency, mode, passband, ptt = status
@@ -810,6 +933,7 @@ class AuroraQtWindow(QMainWindow):
                 self.cat_button.setText("DISCONNECT HAMLIB")
                 self.cat_button.setEnabled(True)
                 self.apply_radio_button.setEnabled(True)
+                self.station_data_button.setEnabled(self.ptt_arm.isChecked())
                 self._show_cat_status(values[2])
                 source = "external" if self._hamlib_service is None else "bundled"
                 self._append(
@@ -822,46 +946,86 @@ class AuroraQtWindow(QMainWindow):
                 self._append("[CAT] Radio frequency and mode applied.")
             elif kind == "tx_complete":
                 self.transmit_button.setEnabled(self.ptt_arm.isChecked())
+                self.station_data_button.setEnabled(self.ptt_arm.isChecked())
                 if values[0] is not None:
                     self._append(f"[TX ERROR] {values[0]}")
             elif kind == "cat_error":
                 self.cat_button.setEnabled(True)
                 self._append(f"[CAT ERROR] {values[0]}")
 
-    def _build_transmit_audio(self) -> AudioBuffer:
+    def _build_transmit_audio(self, message_text: str | None = None) -> AudioBuffer:
         """Build conditioned radio audio for the current operator message."""
         mode = mode_at_frequency(self._selected_mode(), self.frequency.value())
-        transmission = encode_chat_transmission(
-            self.callsign.text(), self.message.text(), mode=mode
+        transmission = encode_chat_air_transmission(
+            self.callsign.text(), message_text or self._expanded_message(), mode=mode
         )
         waveform = modulate_audio(
             transmission.symbols,
             mode,
             leading_silence_samples=self.settings.audio_sample_rate // 5,
         )
-        return condition_playback(
+        conditioned = condition_playback(
             waveform,
             gain=0.55,
             fade_seconds=0.02,
             trailing_silence_seconds=0.10,
         )
+        validate_transmit_audio(conditioned)
+        return conditioned
 
-    def _transmit(self) -> None:
+    def _send_station_data(self) -> None:
+        """Send optional location as a separate AX.25 station-data frame."""
         if self._hamlib is None or not self.ptt_arm.isChecked():
-            self._append("[TX BLOCKED] Connect Hamlib and explicitly arm PTT.")
+            self._append("[TX BLOCKED] Connect Hamlib and enable PTT Control.")
             return
         try:
+            latitude_text = self.latitude.text().strip()
+            longitude_text = self.longitude.text().strip()
+            altitude_text = self.altitude.text().strip()
+            station = StationData(
+                self.callsign.text(),
+                grid=self.grid.text().strip() or None,
+                latitude=float(latitude_text) if latitude_text else None,
+                longitude=float(longitude_text) if longitude_text else None,
+                altitude_m=float(altitude_text) if altitude_text else None,
+            )
+            mode = mode_at_frequency(self._selected_mode(), self.frequency.value())
+            transmission = encode_station_air_transmission(
+                station,
+                frame_id=secrets.randbits(32),
+                mode=mode,
+            )
+            waveform = modulate_audio(
+                transmission.symbols,
+                mode,
+                leading_silence_samples=self.settings.audio_sample_rate // 5,
+            )
+            audio = condition_playback(
+                waveform,
+                gain=0.55,
+                fade_seconds=0.02,
+                trailing_silence_seconds=0.10,
+            )
+            validate_transmit_audio(audio)
             output = self._output_devices[self.output_device.currentText()]
-            audio = self._build_transmit_audio()
         except Exception as error:
-            self._append(f"[AUDIO TX ERROR] {error}")
+            self._append(f"[STATION DATA ERROR] {error}")
             return
+        self._start_radio_playback(audio, output.index)
+        location = station.grid or "location omitted"
+        if station.latitude is not None:
+            location = "GPS included"
+        self._append(f"[TX AX.25/{station.callsign}] {location}")
+
+    def _start_radio_playback(self, audio: AudioBuffer, output_index: int) -> None:
+        """Key PTT and play one already-conditioned Aurora transmission."""
         self.transmit_button.setEnabled(False)
+        self.station_data_button.setEnabled(False)
 
         def worker() -> None:
             try:
                 self._hamlib.set_ptt(True)
-                play_audio(audio, blocking=True, device=output.index)
+                play_audio(audio, blocking=True, device=output_index)
                 self._cat_events.put(("tx_complete", None))
             except Exception as error:
                 self._cat_events.put(("tx_complete", error))
@@ -872,9 +1036,22 @@ class AuroraQtWindow(QMainWindow):
                     self._cat_events.put(("cat_error", error))
 
         threading.Thread(target=worker, name="AuroraRadioTransmit", daemon=True).start()
+
+    def _transmit(self) -> None:
+        if self._hamlib is None or not self.ptt_arm.isChecked():
+            self._append("[TX BLOCKED] Connect Hamlib and explicitly arm PTT.")
+            return
+        try:
+            output = self._output_devices[self.output_device.currentText()]
+            expanded_message = self._expanded_message()
+            audio = self._build_transmit_audio(expanded_message)
+        except Exception as error:
+            self._append(f"[AUDIO TX ERROR] {error}")
+            return
+        self._start_radio_playback(audio, output.index)
         self._append(
             f"[TX {self.frequency.value()} Hz/{self.callsign.text()}] "
-            f"{self.message.text().strip()}"
+            f"{expanded_message}"
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802

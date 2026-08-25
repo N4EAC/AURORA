@@ -23,7 +23,16 @@ HAMLIB_DOCS = HAMLIB_ROOT / "share" / "doc" / "hamlib"
 if not RIGCTLD.is_file():
     raise SystemExit(f"Bundled Hamlib executable is missing: {RIGCTLD}")
 
-datas = [(str(PROJECT_ROOT / "Aurora_logo.png"), ".")]
+VERSION_FILE = PROJECT_ROOT / "build" / "generated" / "aurora-version.txt"
+if not VERSION_FILE.is_file():
+    raise SystemExit(
+        "Build metadata is missing; run packaging/prepare_build.py first"
+    )
+
+datas = [
+    (str(PROJECT_ROOT / "Aurora_logo.png"), "."),
+    (str(VERSION_FILE), "."),
+]
 binaries = [(str(RIGCTLD), f"runtime/hamlib/{PLATFORM_KEY}/bin")]
 if platform.system() == "Windows":
     binaries.extend(

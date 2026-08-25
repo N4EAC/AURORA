@@ -1,11 +1,13 @@
-"""Tests for Aurora's fixed-geometry AX.25 chat transport."""
+"""Tests for Aurora's variable-length native chat transport."""
 
 import unittest
 
 from dsp.core import decode_transmission
 from modem.chat_transport import (
     CHAT_TEXT_BYTES,
+    build_native_chat,
     decode_chat_transport,
+    encode_chat_air_transmission,
     encode_chat_transmission,
 )
 
@@ -17,7 +19,23 @@ class ChatTransportTests(unittest.TestCase):
         decoded = decode_chat_transport(decode_transmission(first))
         self.assertEqual(decoded.callsign, "N4EAC")
         self.assertEqual(decoded.text, "CQ from Aurora")
-        self.assertEqual(len(first.symbols), len(second.symbols))
+        self.assertLess(len(second.symbols), len(first.symbols))
+
+    def test_native_chat_has_no_ax25_padding(self) -> None:
+        short = build_native_chat("N4EAC", "x", frame_id=7)
+        longer = build_native_chat("N4EAC", "a longer message", frame_id=7)
+        self.assertEqual(len(longer) - len(short), len("a longer message") - 1)
+
+    def test_air_transmission_has_protected_bootstrap(self) -> None:
+        transmission = encode_chat_air_transmission(
+            "N4EAC", "CQ", frame_id=0x12345678
+        )
+        self.assertGreater(transmission.bootstrap_symbol_count, 0)
+        self.assertGreater(transmission.payload_symbol_count, 0)
+        self.assertEqual(
+            len(transmission.symbols),
+            transmission.bootstrap_symbol_count + transmission.payload_symbol_count,
+        )
 
     def test_message_limit_is_enforced(self) -> None:
         with self.assertRaisesRegex(ValueError, str(CHAT_TEXT_BYTES)):

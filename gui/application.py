@@ -56,12 +56,12 @@ from modem.station_data import (
     decode_station_transport,
     encode_station_transmission,
 )
-from modem.chat_transport import encode_chat_transmission
+from modem.chat_transport import encode_chat_air_transmission
 from waterfall.model import WaterfallModel
 from util.session_debug_log import SessionDebugLog
+from util.application_version import APPLICATION_VERSION
 
 
-APPLICATION_VERSION = "0.1.0-dev"
 
 
 def _append_history(history: tk.Text, line: str, tag: str = "info") -> None:
@@ -1040,6 +1040,8 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 event: MultichannelDecodeEvent = outcome
                 continuous_decode_count += 1
                 selected = event.frequency_hz == tuning_frequency.get()
+                if event.message is None:
+                    continue
                 if selected:
                     _append_history(
                         history,
@@ -1194,7 +1196,7 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
                 continuous_mode,
                 tuning_frequency.get(),
             )
-            transmission = encode_chat_transmission(
+            transmission = encode_chat_air_transmission(
                 station_callsign.get(),
                 selected_message,
                 mode=tuned_mode,

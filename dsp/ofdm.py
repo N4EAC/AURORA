@@ -34,6 +34,7 @@ class OfdmConfig:
         4,
     )
     training_symbol_count: int = 2
+    pilot_interval_blocks: int = 8
     bandwidth_hz: int = 500
     shaping_filter_taps: int = 129
 
@@ -44,6 +45,8 @@ class OfdmConfig:
             raise ValueError("OFDM cyclic prefix must be shorter than the FFT")
         if self.training_symbol_count < 2:
             raise ValueError("OFDM requires at least two training symbols")
+        if self.pilot_interval_blocks <= 0:
+            raise ValueError("OFDM pilot interval must be positive")
         if self.bandwidth_hz not in {500, 2_300, 2_800}:
             raise ValueError("OFDM bandwidth must be 500, 2300, or 2800 Hz")
         if self.shaping_filter_taps < 3 or self.shaping_filter_taps % 2 == 0:
@@ -142,7 +145,10 @@ def frame_sample_count(payload_symbol_count: int, config: OfdmConfig = DEFAULT_O
     if payload_symbol_count <= 0:
         raise ValueError("OFDM payload symbol count must be positive")
     payload_blocks = math.ceil(payload_symbol_count / len(config.data_subcarriers))
-    raw_samples = (config.training_symbol_count + payload_blocks) * config.block_samples
+    pilot_blocks = max(0, (payload_blocks - 1) // config.pilot_interval_blocks)
+    raw_samples = (
+        config.training_symbol_count + payload_blocks + pilot_blocks
+    ) * config.block_samples
     return raw_samples + config.shaping_filter_taps - 1
 
 
@@ -165,11 +171,17 @@ def modulate_ofdm_audio(
     training = _ifft_block(_training_values(config), config)
     blocks = [training.copy() for _ in range(config.training_symbol_count)]
     width = len(config.data_subcarriers)
-    for offset in range(0, len(payload), width):
+    payload_blocks = math.ceil(len(payload) / width)
+    for block_number, offset in enumerate(range(0, len(payload), width), start=1):
         values = np.zeros(width, dtype=np.complex128)
         chunk = payload[offset : offset + width]
         values[: len(chunk)] = chunk
         blocks.append(_ifft_block(values, config))
+        if (
+            block_number % config.pilot_interval_blocks == 0
+            and block_number < payload_blocks
+        ):
+            blocks.append(training.copy())
     baseband = _shape_baseband(np.concatenate(blocks), config)
     indices = np.arange(len(baseband), dtype=np.float64)
     carrier_hz = config.audio_center_hz + frequency_offset_hz
@@ -227,7 +239,7 @@ def _recover_at_start(
     config: OfdmConfig,
     start: int,
     metric: float,
-) -> tuple[NDArray[np.complex128], float, float, int]:
+) -> tuple[NDArray[np.complex128], float, float, int, float]:
     """Recover one OFDM timing hypothesis from an already downmixed signal."""
     required = frame_sample_count(payload_symbol_count, config)
     if start + required > len(baseband):
@@ -288,17 +300,28 @@ def _recover_at_start(
     channel = training_values / expected
     if np.any(np.abs(channel) <= np.finfo(float).tiny):
         raise ValueError("OFDM training produced a zero channel estimate")
-    recovered = np.concatenate(
-        [
-            carrier_values(index) / channel
-            for index in range(
-                config.training_symbol_count,
-                required // config.block_samples,
-            )
-        ]
-    )[:payload_symbol_count]
+    data_block_count = math.ceil(payload_symbol_count / len(config.data_subcarriers))
+    recovered_blocks = []
+    physical_block = config.training_symbol_count
+    maximum_timing_drift = 0.0
+    carriers = np.asarray(config.data_subcarriers, dtype=np.float64)
+    for data_block in range(data_block_count):
+        if data_block and data_block % config.pilot_interval_blocks == 0:
+            pilot_channel = carrier_values(physical_block) / expected
+            phase_change = np.unwrap(np.angle(pilot_channel / channel))
+            if len(carriers) >= 2:
+                phase_slope = float(np.polyfit(carriers, phase_change, 1)[0])
+                timing_drift = -phase_slope * config.fft_size / (2.0 * math.pi)
+                maximum_timing_drift = max(
+                    maximum_timing_drift, abs(timing_drift)
+                )
+            channel = pilot_channel
+            physical_block += 1
+        recovered_blocks.append(carrier_values(physical_block) / channel)
+        physical_block += 1
+    recovered = np.concatenate(recovered_blocks)[:payload_symbol_count]
     recovered.setflags(write=False)
-    return recovered, metric, frequency_offset, start
+    return recovered, metric, frequency_offset, start, maximum_timing_drift
 
 
 def demodulate_ofdm_audio(
@@ -307,7 +330,7 @@ def demodulate_ofdm_audio(
     config: OfdmConfig = DEFAULT_OFDM_CONFIG,
     *,
     sync_threshold: float | None = None,
-) -> tuple[NDArray[np.complex128], float, float, int]:
+) -> tuple[NDArray[np.complex128], float, float, int, float]:
     """Acquire, frequency-correct, equalize, and recover OFDM payload symbols."""
     if audio.channel_count != 1 or audio.sample_rate != config.sample_rate:
         raise ValueError("OFDM receiver requires matching mono audio")
@@ -333,7 +356,7 @@ def demodulate_ofdm_candidates(
     config: OfdmConfig = DEFAULT_OFDM_CONFIG,
     *,
     sync_threshold: float | None = None,
-) -> tuple[tuple[NDArray[np.complex128], float, float, int], ...]:
+) -> tuple[tuple[NDArray[np.complex128], float, float, int, float], ...]:
     """Recover bounded timing hypotheses for CRC-aided frame selection."""
     if audio.channel_count != 1 or audio.sample_rate != config.sample_rate:
         raise ValueError("OFDM receiver requires matching mono audio")

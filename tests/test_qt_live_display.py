@@ -55,20 +55,35 @@ class QtLiveDisplayTests(unittest.TestCase):
 
     def test_operator_preferences_round_trip(self) -> None:
         first = AuroraQtWindow(preferences=self.preferences)
+        first.operator_name.setText("Eduardo")
         first.callsign.setText("K1ABC")
         first.grid.setText("FN31")
+        first.latitude.setText("41.1")
+        first.longitude.setText("-72.2")
         first.bandwidth.setCurrentText("2.3 kHz")
         first.frequency.setValue(1_700)
         first._apply_theme("Amber")
         first.close()
 
         second = AuroraQtWindow(preferences=self.preferences)
+        self.assertEqual(second.operator_name.text(), "Eduardo")
         self.assertEqual(second.callsign.text(), "K1ABC")
         self.assertEqual(second.grid.text(), "FN31")
+        self.assertEqual(second.latitude.text(), "41.1")
+        self.assertEqual(second.longitude.text(), "-72.2")
         self.assertEqual(second.bandwidth.currentText(), "2.3 kHz")
         self.assertEqual(second.frequency.value(), 1_700)
         self.assertEqual(second.preferences.value("appearance/theme"), "Amber")
         second.close()
+
+    def test_other_signal_can_tune_and_prepare_contact(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window.add_other_signal(1_700, "W1AW", "CQ")
+        window._tune_to_other_signal(0, prepare_contact=True)
+        self.assertEqual(window.frequency.value(), 1_700)
+        self.assertEqual(window.message.text(), "W1AW de <CALL>")
+        self.assertIn("reply prepared for W1AW", window.history.toPlainText())
+        window.close()
 
 
 if __name__ == "__main__":

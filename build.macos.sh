@@ -6,10 +6,13 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_VENV="$PROJECT_ROOT/.venv-build-macos"
 VERSION="${AURORA_VERSION:-0.1.0}"
 ARCH="$(uname -m)"
+export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-config-macos"
 
 cd "$PROJECT_ROOT"
 [[ "$(uname -s)" == "Darwin" ]] || { print -u2 "ERROR: Run this script on macOS."; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null || { print -u2 "ERROR: Python 3 is required."; exit 1; }
+command -v codesign >/dev/null || { print -u2 "ERROR: Xcode command-line tools are required."; exit 1; }
+command -v hdiutil >/dev/null || { print -u2 "ERROR: hdiutil is required."; exit 1; }
 
 "$PYTHON_BIN" -m venv "$BUILD_VENV"
 "$BUILD_VENV/bin/python" -m pip install --upgrade pip
@@ -18,6 +21,7 @@ if [[ "${AURORA_SKIP_TESTS:-0}" != "1" ]]; then
     QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 \
         "$BUILD_VENV/bin/python" -m unittest discover -s tests -q
 fi
+"$BUILD_VENV/bin/python" packaging/prepare_build.py "$VERSION"
 "$BUILD_VENV/bin/python" tools/bootstrap_hamlib.py
 "$BUILD_VENV/bin/python" packaging/stage_hamlib.py
 

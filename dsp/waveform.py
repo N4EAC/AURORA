@@ -20,6 +20,7 @@ class WaveformDiagnostics:
     sync_metric: float
     frequency_offset_hz: float
     symbol_start_sample: int
+    timing_offset_samples: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +182,7 @@ def demodulate_audio(
 
         ofdm_config = config_for_mode(mode)
 
-        symbols, metric, offset, start = demodulate_ofdm_audio(
+        symbols, metric, offset, start, timing = demodulate_ofdm_audio(
             audio,
             payload_symbol_count,
             ofdm_config,
@@ -189,7 +190,7 @@ def demodulate_audio(
         )
         return WaveformResult(
             symbols,
-            WaveformDiagnostics(True, metric, offset, start),
+            WaveformDiagnostics(True, metric, offset, start, timing),
         )
     if audio.channel_count != 1:
         raise ValueError("Experimental waveform receiver requires mono audio")
@@ -263,8 +264,11 @@ def demodulate_audio_candidates(
         sync_threshold=min(sync_threshold, acquisition_threshold(config)),
     )
     return tuple(
-        WaveformResult(symbols, WaveformDiagnostics(True, metric, offset, start))
-        for symbols, metric, offset, start in candidates
+        WaveformResult(
+            symbols,
+            WaveformDiagnostics(True, metric, offset, start, timing),
+        )
+        for symbols, metric, offset, start, timing in candidates
     )
 
 

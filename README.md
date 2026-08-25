@@ -17,10 +17,12 @@ weak-signal communication under real-world HF propagation conditions.
   Windows. The Tkinter interface remains an explicit compatibility fallback.
 - Added persistent Station ID, CAT Control, and Audio setup, including named
   Hamlib radios, dockable panels, Dark/Amber/Green themes, and Enter-to-send.
-- Added live radio-audio spectrum and compact waterfall displays, shared
-  100–3000 Hz tuning, and simultaneous CRC-gated in-passband decoding.
+- Added live 100–3000 Hz radio-audio spectrum and compact waterfall displays,
+  profile-bounded TX/RX tuning, and simultaneous CRC-gated decoding.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
-- Expanded the automated regression suite to 227 tests.
+- Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
+  transmit-audio linearity limits, and seeded bootstrap characterization.
+- Expanded the automated regression suite to 241 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -125,10 +127,13 @@ The initial bit-level DSP core provides:
 The generic bit-level core remains independent of waveform filtering and
 automatic gain control.
 
-Aurora also provides a parallel AX.25 UI-frame transport for callsign, grid,
-GPS position, altitude, and short station metadata. AX.25 frames are identified
-by an Aurora frame flag and share the same FEC and adaptive OFDM waveform as
-native messages. See [the AX.25 transport definition](docs/ax25_transport.md).
+Native variable-length Aurora frames carry chat without AX.25 overhead or
+fixed-size padding. A protected bootstrap signals exact geometry, bandwidth,
+constellation/FEC, interleaver, payload type, and frame ID. Separate AX.25 UI
+frames carry callsign, grid, GPS position, altitude, and short station metadata
+only when needed. Compact native reception reports can refer to an earlier
+frame ID. See [the native transport](docs/native_transport.md) and
+[AX.25 station-data definition](docs/ax25_transport.md).
 
 The primary waveform maps protected constellation values across a provisional
 12 kHz cyclic-prefix OFDM signal. Repeated training blocks provide acquisition,
@@ -217,7 +222,8 @@ or an error.
 
 Aurora includes a Hann-windowed FFT analyzer, live spectrum, and compact
 bounded waterfall driven only by the selected radio audio input. Clicking the
-spectrum changes the shared TX/RX audio frequency between 100 and 3000 Hz.
+Spectrum selection changes the shared TX/RX audio center within bounds that
+keep the complete selected bandwidth inside the 100–3000 Hz working passband.
 Selected-frequency traffic appears in Messages; other CRC-valid decoded
 traffic appears in the independent Other Signals dock. Aurora does not
 generate a pretend spectrum or open audio automatically.

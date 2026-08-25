@@ -3,9 +3,9 @@
 ## Status and scope
 
 This document records the coding selection paired with Aurora's provisional
-OFDM physical layer. It is **not** a released over-the-air protocol. Mode
-identification, parameter negotiation, and a transmitted bootstrap header
-remain unspecified.
+OFDM physical layer. It is **not** a released over-the-air protocol. A
+protected bootstrap now identifies the frame profile and exact payload
+geometry; negotiation and controlled HF validation remain unfinished.
 
 ## Selected parameters
 
@@ -32,18 +32,16 @@ The physical-layer details are defined in `docs/ofdm_mode_definition.md`.
 ## Interleaver decision
 
 Each interleaver geometry aligns one row with the active carriers in its OFDM
-profile. The selected geometry is fixed for a frame and is not
-signaled. A receiver exercising this exact mode must already know the geometry.
-Signaling it now would imply a bootstrap header and parsing rules that have not
-been designed or validated.
+profile. The selected geometry is fixed for a frame and transmitted in the
+protected bootstrap with the bandwidth, constellation, FEC, and payload size.
+The current receiver validates that advertised geometry before payload decode.
 
 The simulation UI may disable interleaving as an explicit diagnostic override
 for controlled A/B measurements. Such a run is a test variation and is not the
 defined robust simulation mode.
 
-If future waveform and protocol research demonstrates a need for adaptive
-geometry, Aurora must first define a robust mode-identification mechanism that
-can be acquired without knowing the payload interleaver.
+Bootstrap acquisition under weak, fading HF conditions remains to be
+characterized before this signaling format is considered stable.
 
 ## Archived research waveform
 

@@ -5,6 +5,7 @@ cd /d "%~dp0"
 if not defined AURORA_VERSION set "AURORA_VERSION=0.1.0"
 if not defined PYTHON_BIN set "PYTHON_BIN=py -3"
 set "BUILD_VENV=%CD%\.venv-build-windows"
+set "PYINSTALLER_CONFIG_DIR=%CD%\build\pyinstaller-config-windows"
 
 %PYTHON_BIN% -m venv "%BUILD_VENV%"
 if errorlevel 1 goto :error
@@ -18,6 +19,8 @@ if not "%AURORA_SKIP_TESTS%"=="1" (
     if errorlevel 1 goto :error
 )
 
+"%BUILD_VENV%\Scripts\python.exe" packaging\prepare_build.py "%AURORA_VERSION%"
+if errorlevel 1 goto :error
 "%BUILD_VENV%\Scripts\python.exe" tools\bootstrap_hamlib.py
 if errorlevel 1 goto :error
 "%BUILD_VENV%\Scripts\python.exe" packaging\stage_hamlib.py

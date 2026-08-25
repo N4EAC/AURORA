@@ -5,6 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_VENV="$PROJECT_ROOT/.venv-build-ubuntu"
 VERSION="${AURORA_VERSION:-0.1.0}"
+export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-config-ubuntu"
 
 cd "$PROJECT_ROOT"
 [[ "$(uname -s)" == "Linux" ]] || { echo "ERROR: Run this script on Ubuntu." >&2; exit 1; }
@@ -18,6 +19,7 @@ if [[ "${AURORA_SKIP_TESTS:-0}" != "1" ]]; then
     QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 \
         "$BUILD_VENV/bin/python" -m unittest discover -s tests -q
 fi
+"$BUILD_VENV/bin/python" packaging/prepare_build.py "$VERSION"
 "$BUILD_VENV/bin/python" tools/bootstrap_hamlib.py
 "$BUILD_VENV/bin/python" packaging/stage_hamlib.py
 

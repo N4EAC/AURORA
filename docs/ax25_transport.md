@@ -1,10 +1,10 @@
-# AX.25 transport over Aurora
+# AX.25 station-data transport over Aurora
 
 ## Scope
 
 Aurora provides AX.25 as a parallel logical transport alongside native text
 payloads. Both transports use the same Aurora framing, FEC, adaptive OFDM
-waveform, audio path, and future radio interface. AX.25 does not create a
+waveform, audio path, and radio interface. AX.25 does not create a
 second simultaneous RF signal.
 
 This implementation follows the TAPR AX.25 version 2.2 address and
@@ -19,9 +19,10 @@ already framed Aurora transmission.
 
 ## Multiplexing
 
-Aurora frame flag bit `0x01` identifies an AX.25 payload. Flag-clear frames
-remain native Aurora data. This lets a receiver route both payload types after
-the common Aurora CRC and FEC checks.
+Aurora frame flag `0x01` identifies AX.25 station data. Native chat uses `0x02`
+and reception reports use `0x04`; a protected bootstrap advertises the type
+before the variable-length payload. This lets a receiver route each payload
+after common Aurora CRC and FEC checks.
 
 The current AX.25 path uses UI frames with PID `0xF0` (no layer-3 protocol).
 Connected-mode AX.25, acknowledgment windows, KISS, APRS formatting, and
@@ -42,9 +43,10 @@ The AX.25 source address carries the station callsign and optional SSID. The
 default destination is `AURORA`. The information field begins with `AU`, then
 version byte `1`, followed by type-length-value fields.
 
-GPS values entered in the UI are shown locally but are not written verbatim to
-the structured session log. Operators remain responsible for deciding whether
-location data is appropriate to transmit. CAT, PTT, and RF remain inactive.
+GPS values entered in development controls are shown locally but are not
+written verbatim to the structured session log. Operators remain responsible
+for deciding whether location data is appropriate to transmit. Encoding a
+station record does not itself activate CAT, PTT, or RF.
 
 ## Validation boundary
 
