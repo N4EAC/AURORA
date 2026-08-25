@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Aurora
+Comment=Adaptive weak-signal HF digital modem
+Exec=aurora
+Icon=aurora
+Terminal=false
+Categories=Network;HamRadio;

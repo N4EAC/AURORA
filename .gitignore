@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+.DS_Store
 
 # Visual Studio per-user workspace state is never versioned.
 .vs/
@@ -12,3 +13,12 @@ logs/*.log
 logs/aurora_loopback_*.wav
 logs/*.json
 logs/*.err
+
+# Reproducibly generated, platform-specific bundled radio runtime.
+runtime/hamlib/
+
+# Reproducible application and installer output.
+.build/
+.venv-build-*/
+build/
+dist/

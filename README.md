@@ -2,6 +2,8 @@
   <img src="Aurora_logo.png" alt="Aurora logo" width="700">
 </p>
 
+Platform installer instructions are documented in [docs/building.md](docs/building.md).
+
 # Aurora
 
 **Project ID:** AURORA-HF-MODEM-2026
@@ -9,8 +11,21 @@
 Aurora is a new digital-modem research project exploring reliable,
 weak-signal communication under real-world HF propagation conditions.
 
-## UPDATES — July 29, 2026 12:58 UTC
+## UPDATES — August 24, 2026
 
+- Promoted the responsive PySide6 operator interface on macOS, Linux, and
+  Windows. The Tkinter interface remains an explicit compatibility fallback.
+- Added persistent Station ID, CAT Control, and Audio setup, including named
+  Hamlib radios, dockable panels, Dark/Amber/Green themes, and Enter-to-send.
+- Added live radio-audio spectrum and compact waterfall displays, shared
+  100–3000 Hz tuning, and simultaneous CRC-gated in-passband decoding.
+- Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
+- Expanded the automated regression suite to 227 tests.
+
+- Replaced Aurora's unreleased single-carrier primary waveform with a
+  provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
+  500 Hz, 2.3 kHz, or 2.8 kHz profiles from measured channel conditions, with
+  500 Hz as the safe fallback.
 - Propagated PortAudio callback overflow and underflow status into the
   continuous receiver so partial state is discarded after a confirmed input
   discontinuity.
@@ -42,7 +57,6 @@ weak-signal communication under real-world HF propagation conditions.
 - Completed 10,000 matched-path, two-observation noise-only trials with zero
   false decodes. The 95% Wilson upper bound is approximately 0.0384% for that
   offline Gaussian-noise model.
-- Expanded the automated regression suite to 183 tests.
 - Added a bounded fixed-geometry continuous audio receiver with arbitrary block
   handling, CRC-confirmed events, discontinuity counters, and UI controls.
 - Passed the first persistent-stream VB-CABLE frame and the first provisional
@@ -68,14 +82,14 @@ validation remain required.
 ## Project status
 
 Aurora is in active development. The repository provides the foundational
-project structure, offline modem research, a simulation interface, and an
-audio-only real-time loopback workflow. The application can open explicitly
-selected audio devices for operator-approved loopback tests. Radio integration
-remains inactive: the loopback workflow does not use CAT, PTT, or RF.
+project structure, adaptive OFDM modem research, a responsive operator
+interface, live radio-audio monitoring, multi-frequency decoding, and
+audio-only validation workflows. Aurora includes bundled Hamlib CAT/PTT
+control, but never connects to a radio or opens audio automatically.
 
 ## Design goals
 
-- Approximately 1 kHz occupied bandwidth
+- Adaptive 500 Hz, 2.3 kHz, and 2.8 kHz occupied-bandwidth profiles
 - Strong weak-signal performance and HF robustness
 - Adaptive operation and efficient synchronization
 - Forward error correction
@@ -92,7 +106,8 @@ objectives, not current capability claims. See `docs/performance_targets.md`.
 ## Technology
 
 - Python 3
-- Tkinter for the desktop interface
+- PySide6 for the responsive cross-platform desktop interface
+- Tkinter retained temporarily as a compatibility interface
 - NumPy for numerical processing
 - SciPy only where it provides a clear DSP advantage
 
@@ -104,18 +119,23 @@ The initial bit-level DSP core provides:
 - CRC-16/CCITT-FALSE integrity checking
 - Additive bit scrambling for spectral whitening
 - Rate-1/2 convolutional FEC with hard-decision Viterbi decoding
-- Normalized BPSK and Gray-coded QPSK symbol mapping
+- Normalized BPSK symbol mapping for Aurora OFDM subcarriers
 - A composable payload-to-symbol and symbol-to-payload pipeline
 
 The generic bit-level core remains independent of waveform filtering and
 automatic gain control.
 
-The robust waveform path converts BPSK symbols into 12 kHz real-valued audio
-using root-raised-cosine pulse shaping and recovers them with preamble
-acquisition, matched filtering, and residual carrier-offset correction. It is
-used by offline studies, one-shot audio loopback, and fixed-geometry continuous
+Aurora also provides a parallel AX.25 UI-frame transport for callsign, grid,
+GPS position, altitude, and short station metadata. AX.25 frames are identified
+by an Aurora frame flag and share the same FEC and adaptive OFDM waveform as
+native messages. See [the AX.25 transport definition](docs/ax25_transport.md).
+
+The primary waveform maps protected constellation values across a provisional
+12 kHz cyclic-prefix OFDM signal. Repeated training blocks provide acquisition,
+residual carrier-offset measurement, and per-subcarrier equalization. It is
+used by offline tests, one-shot audio loopback, and fixed-geometry continuous
 receive tests. None of these paths controls a radio. See
-[the waveform experiment](docs/waveform_experiment.md).
+[the OFDM mode definition](docs/ofdm_mode_definition.md).
 
 The offline robustness harness adds deterministic real-audio AWGN, timing
 displacement, sample-clock error, multipath, fading, impulsive noise, and level
@@ -153,14 +173,14 @@ The initial receiver operates on complex baseband samples and provides:
 - Frequency-offset estimation from preamble phase slope
 - Complex carrier-offset correction
 - Interpolated Gardner symbol-timing recovery
-- BPSK and QPSK soft log-likelihood demapping
+- BPSK soft log-likelihood demapping for Aurora receive paths
 - Soft-input Viterbi FEC decoding
 - Sync, SNR, frequency-offset, and timing diagnostics
 
 Aurora now has complete development audio-to-message paths for known frame
-geometry: one-shot loopback and a bounded continuous receiver. Unknown-length
-framing, mode identification, automatic gain control, mid-frame timing repair,
-and operational radio integration remain incomplete.
+geometry: one-shot loopback and a bounded continuous multi-frequency receiver.
+Unknown-length framing, full over-the-air interoperability validation,
+automatic gain control, and mid-frame timing repair remain incomplete.
 
 ## Audio
 
@@ -180,32 +200,54 @@ waveform requirements evolve.
 
 ## Radio integration
 
-The initial radio layer provides:
+The radio layer provides:
 
 - Serial-port discovery and a thread-safe ASCII command transport
 - Kenwood-style CAT frequency, mode, and PTT commands
 - CAT, RTS, and DTR PTT methods with automatic release support
+- Bundled Hamlib `rigctld` and operator-readable radio model selection
 - SQLite contact records with UTC timestamps and operating details
 
-Radio control is inactive at application startup. PTT is changed only through
-an explicit API call, and the context-managed transmit API releases PTT when an
-operation raises an exception.
+Radio control is disconnected at startup. **PTT Control** is enabled by
+default, but SEND remains unavailable until the operator connects Hamlib.
+Aurora keys PTT only for an explicit SEND action and releases it after playback
+or an error.
 
 ## Spectrum and waterfall
 
-Aurora includes a Hann-windowed FFT analyzer for real or complex samples, a
-bounded waterfall history, and dark-themed Tkinter spectrum and waterfall
-views. The views expose update APIs for future connection to live audio and
-receiver processing. The current application starts them with an empty display
-and does not open an audio stream automatically. Select **START SYNTHETIC
-SIGNAL** to exercise the current displays without using audio hardware.
+Aurora includes a Hann-windowed FFT analyzer, live spectrum, and compact
+bounded waterfall driven only by the selected radio audio input. Clicking the
+spectrum changes the shared TX/RX audio frequency between 100 and 3000 Hz.
+Selected-frequency traffic appears in Messages; other CRC-valid decoded
+traffic appears in the independent Other Signals dock. Aurora does not
+generate a pretend spectrum or open audio automatically.
 
-## Local operator test
+## Operator interface
 
-The first operator iteration includes a BPSK/QPSK local codec test. Enter a
-message and select **RUN LOCAL CODEC TEST** to pass it through Aurora framing,
-scrambling, FEC, symbol mapping, soft decoding, and CRC validation. This is a
-local software test only and does not generate an audio waveform or RF signal.
+The compact main window shows radio frequency, radio mode, station callsign,
+occupied bandwidth, synchronization, SNR, frequency offset, timing, CRC, and
+FEC status. Messages and Other Signals are independently dockable and
+resizable. Select **SEND** or press Enter to transmit.
+
+The **Setup** menu provides Station ID, CAT Control, and Audio tabs. These
+contain callsign/grid, named radio model, CAT serial and `rigctld` settings,
+PTT Control, radio audio devices, and live receiver controls. Aurora remembers
+operator, CAT, audio, tuning, bandwidth, theme, window, and dock settings using
+the platform-native settings store. Dark, Amber, and Green themes are
+available.
+
+Aurora uses asynchronous frame acquisition rather than mandatory UTC transmit
+slots. Each OFDM frame carries its own synchronization and training sequence,
+so ordinary receive and SEND operation do not require an FT8-style timer.
+Future scheduled CQ, beacon, or channel-access features may use optional
+timers without making clock synchronization mandatory.
+
+## Development validation
+
+The retained Tkinter compatibility interface includes offline codec, channel,
+and audio-loopback development controls. These exercise Aurora framing,
+scrambling, FEC, OFDM mapping, soft decoding, and CRC validation without
+activating CAT, PTT, or RF.
 
 The channel test adds deterministic Clean, Moderate HF, Weak Signal, and Severe
 presets. It can run one to 1,000 symbol-domain frames with injected AWGN and
@@ -251,10 +293,11 @@ Aurora/
 |-- config/      Central application settings
 |-- docs/        Project documentation
 |-- dsp/         Digital signal-processing algorithms
-|-- gui/         Tkinter user interface
+|-- gui/         PySide6 operator UI and Tkinter compatibility UI
 |-- logs/        Rotating application logs (created at runtime)
 |-- modem/       Modem and protocol logic
-|-- radio/       CAT, PTT, serial ports, and contact records
+|-- packaging/   PyInstaller and native installer definitions
+|-- radio/       Hamlib, CAT, PTT, serial ports, and contact records
 |-- tests/       Automated tests
 |-- util/        Shared utilities and logging setup
 |-- waterfall/   Waterfall and spectrum displays
@@ -287,6 +330,34 @@ Run the current desktop shell with:
 ```powershell
 .\.venv\Scripts\python.exe .\aurora.py
 ```
+
+Aurora prefers the PySide6 interface. During the transition, the previous
+Tkinter interface remains available with `aurora.py --tk`.
+
+The primary interface displays only samples captured from the selected radio
+audio input. Aurora bundles and starts its own Hamlib `rigctld` service by
+default; operators do not need to install Hamlib. An external local or network
+service remains an advanced option. Radio frequency and mode polling are
+asynchronous. PTT Control defaults to enabled, while SEND remains blocked until
+Hamlib is connected. See
+[the bundled Hamlib design](docs/bundled_hamlib.md).
+
+## Native builds
+
+Build on each target operating system because PyInstaller does not
+cross-compile native applications:
+
+```text
+macOS:   ./build.macos.sh
+Ubuntu:  ./build.ubuntu.sh
+Fedora:  ./build.fedora.sh
+Windows: build.exe.bat
+```
+
+Each workflow runs the tests, prepares private Hamlib, builds and verifies a
+self-contained application, and produces a DMG, DEB, RPM, or Inno Setup
+installer beneath `dist/installer/`. See [the build guide](docs/building.md)
+for prerequisites and release controls.
 
 Aurora records startup, shutdown, and future operational messages in
 `logs/aurora.log`. Log files rotate automatically to limit disk usage.

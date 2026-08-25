@@ -13,7 +13,14 @@ from audio.device import (
     list_audio_devices,
     preferred_loopback_pair,
 )
-from audio.playback import play_audio, stop_playback
+from audio.multichannel_receiver import (
+    MAX_AUDIO_FREQUENCY_HZ,
+    MIN_AUDIO_FREQUENCY_HZ,
+    MultichannelAudioReceiver,
+    MultichannelDecodeEvent,
+    mode_at_frequency,
+)
+from audio.playback import condition_playback, play_audio, stop_playback
 from audio.streaming import (
     AudioDuplexStream,
     AudioInputStream,
@@ -28,13 +35,19 @@ __all__ = [
     "ContinuousDecodeEvent",
     "ContinuousReceiverConfig",
     "ContinuousReceiverDiagnostics",
+    "MAX_AUDIO_FREQUENCY_HZ",
+    "MIN_AUDIO_FREQUENCY_HZ",
+    "MultichannelAudioReceiver",
+    "MultichannelDecodeEvent",
     "AudioDevice",
     "AudioDuplexStream",
     "AudioInputStream",
     "AudioOutputStream",
     "AudioStreamStatus",
     "list_audio_devices",
+    "mode_at_frequency",
     "compatible_outputs",
+    "condition_playback",
     "preferred_loopback_pair",
     "play_audio",
     "read_wav",

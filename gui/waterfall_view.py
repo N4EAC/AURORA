@@ -6,6 +6,7 @@ from tkinter import ttk
 import numpy as np
 
 from waterfall.model import WaterfallModel
+from gui.theme import PALETTE
 
 
 def _color(value: int) -> str:
@@ -25,9 +26,9 @@ class WaterfallView(ttk.Frame):
         self._image: tk.PhotoImage | None = None
         self.canvas = tk.Canvas(
             self,
-            background="#0b1015",
+            background=PALETTE.field,
             highlightthickness=1,
-            highlightbackground="#2a3540",
+            highlightbackground=PALETTE.border,
             height=model.history_size,
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)

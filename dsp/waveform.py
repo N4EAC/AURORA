@@ -32,6 +32,8 @@ class WaveformResult:
 
 def samples_per_symbol(mode: ModeDefinition = AURORA_ROBUST_MODE) -> int:
     """Return the exact integer audio sampling ratio for a mode."""
+    if mode.waveform != "single_carrier":
+        raise ValueError("Samples per symbol applies only to single-carrier research")
     ratio = mode.audio_sample_rate / mode.symbol_rate
     if not ratio.is_integer():
         raise ValueError("Waveform requires an integer samples-per-symbol ratio")
@@ -95,7 +97,16 @@ def modulate_audio(
     leading_silence_samples: int = 0,
     frequency_offset_hz: float = 0.0,
 ) -> AudioBuffer:
-    """Pulse-shape BPSK payload symbols into real passband audio samples."""
+    """Create Aurora audio using the waveform selected by the mode."""
+    if mode.waveform == "ofdm":
+        from dsp.ofdm import config_for_mode, modulate_ofdm_audio
+
+        return modulate_ofdm_audio(
+            payload_symbols,
+            config_for_mode(mode),
+            leading_silence_samples=leading_silence_samples,
+            frequency_offset_hz=frequency_offset_hz,
+        )
     payload = np.asarray(payload_symbols, dtype=np.complex128)
     if payload.ndim != 1 or len(payload) == 0:
         raise ValueError("Payload symbols must be a non-empty one-dimensional sequence")
@@ -160,7 +171,26 @@ def demodulate_audio(
     *,
     sync_threshold: float = 0.70,
 ) -> WaveformResult:
-    """Acquire and recover a known-length BPSK payload from offline audio."""
+    """Acquire and recover a known-length payload from Aurora audio."""
+    if mode.waveform == "ofdm":
+        from dsp.ofdm import (
+            acquisition_threshold,
+            config_for_mode,
+            demodulate_ofdm_audio,
+        )
+
+        ofdm_config = config_for_mode(mode)
+
+        symbols, metric, offset, start = demodulate_ofdm_audio(
+            audio,
+            payload_symbol_count,
+            ofdm_config,
+            sync_threshold=min(sync_threshold, acquisition_threshold(ofdm_config)),
+        )
+        return WaveformResult(
+            symbols,
+            WaveformDiagnostics(True, metric, offset, start),
+        )
     if audio.channel_count != 1:
         raise ValueError("Experimental waveform receiver requires mono audio")
     if audio.sample_rate != mode.audio_sample_rate:
@@ -199,6 +229,42 @@ def demodulate_audio(
     return WaveformResult(
         payload,
         WaveformDiagnostics(True, metric, offset, start),
+    )
+
+
+def demodulate_audio_candidates(
+    audio: AudioBuffer,
+    payload_symbol_count: int,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
+    *,
+    sync_threshold: float = 0.70,
+) -> tuple[WaveformResult, ...]:
+    """Return bounded timing candidates for CRC-aided OFDM selection."""
+    if mode.waveform != "ofdm":
+        return (
+            demodulate_audio(
+                audio,
+                payload_symbol_count,
+                mode,
+                sync_threshold=sync_threshold,
+            ),
+        )
+    from dsp.ofdm import (
+        acquisition_threshold,
+        config_for_mode,
+        demodulate_ofdm_candidates,
+    )
+
+    config = config_for_mode(mode)
+    candidates = demodulate_ofdm_candidates(
+        audio,
+        payload_symbol_count,
+        config,
+        sync_threshold=min(sync_threshold, acquisition_threshold(config)),
+    )
+    return tuple(
+        WaveformResult(symbols, WaveformDiagnostics(True, metric, offset, start))
+        for symbols, metric, offset, start in candidates
     )
 
 

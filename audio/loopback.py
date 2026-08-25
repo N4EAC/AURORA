@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -16,7 +17,11 @@ from dsp.deep_waveform import (
     recover_deep_candidate_likelihoods,
 )
 from dsp.framing import FrameError
-from dsp.waveform import WaveformDiagnostics, demodulate_audio, modulate_audio
+from dsp.waveform import (
+    WaveformDiagnostics,
+    demodulate_audio_candidates,
+    modulate_audio,
+)
 from modem.deep_validation import K10_DEEP_CODEC
 from modem.mode_definition import AURORA_ROBUST_MODE, ModeDefinition
 
@@ -45,6 +50,34 @@ class DeepAudioLoopbackResult:
     duration_seconds: float
     peak_level: float
     clipped: bool
+
+
+def _playrec_with_timeout(
+    samples: np.ndarray,
+    *,
+    sample_rate: int,
+    input_device: int,
+    output_device: int,
+    timeout_margin_seconds: float = 5.0,
+) -> np.ndarray:
+    """Capture full-duplex audio and abort a stalled backend deterministically."""
+    captured = sd.playrec(
+        samples[:, np.newaxis],
+        samplerate=sample_rate,
+        channels=1,
+        dtype="float32",
+        device=(input_device, output_device),
+        blocking=False,
+    )
+    stream = sd.get_stream()
+    deadline = time.monotonic() + len(samples) / sample_rate + timeout_margin_seconds
+    while stream.active:
+        if time.monotonic() >= deadline:
+            sd.stop()
+            raise TimeoutError("Audio loopback backend exceeded its capture timeout")
+        time.sleep(0.05)
+    sd.wait()
+    return np.asarray(captured, dtype=np.float32)
 
 
 def run_audio_loopback(
@@ -76,13 +109,11 @@ def run_audio_loopback(
         np.asarray(waveform.samples, dtype=np.float32) * output_gain,
         (0, mode.audio_sample_rate),
     )
-    captured = sd.playrec(
-        samples[:, np.newaxis],
-        samplerate=mode.audio_sample_rate,
-        channels=1,
-        dtype="float32",
-        device=(input_device, output_device),
-        blocking=True,
+    captured = _playrec_with_timeout(
+        samples,
+        sample_rate=mode.audio_sample_rate,
+        input_device=input_device,
+        output_device=output_device,
     )
     captured_audio = AudioBuffer(
         np.asarray(captured, dtype=np.float32).reshape(-1),
@@ -90,16 +121,26 @@ def run_audio_loopback(
     )
     path = Path(capture_path)
     write_wav(path, captured_audio)
-    recovered = demodulate_audio(
+    candidates = demodulate_audio_candidates(
         captured_audio,
         len(transmission.symbols),
         mode,
     )
-    frame = decode_soft_symbols(
-        tuple(recovered.symbols),
-        mode.modulation,
-        interleaver_columns=mode.interleaver_columns,
-    )
+    recovered = None
+    frame = None
+    for candidate in candidates:
+        try:
+            frame = decode_soft_symbols(
+                tuple(candidate.symbols),
+                mode.modulation,
+                interleaver_columns=mode.interleaver_columns,
+            )
+        except (FrameError, ValueError):
+            continue
+        recovered = candidate
+        break
+    if recovered is None or frame is None:
+        raise FrameError("No CRC-valid OFDM timing candidate was found")
     received = frame.payload.decode("utf-8")
     peak = float(np.max(np.abs(captured_audio.samples)))
     return AudioLoopbackResult(
@@ -136,13 +177,11 @@ def run_deep_audio_loopback(
         np.asarray(waveform.samples, dtype=np.float32) * output_gain,
         (0, AURORA_ROBUST_MODE.audio_sample_rate),
     )
-    captured = sd.playrec(
-        samples[:, np.newaxis],
-        samplerate=AURORA_ROBUST_MODE.audio_sample_rate,
-        channels=1,
-        dtype="float32",
-        device=(input_device, output_device),
-        blocking=True,
+    captured = _playrec_with_timeout(
+        samples,
+        sample_rate=AURORA_ROBUST_MODE.audio_sample_rate,
+        input_device=input_device,
+        output_device=output_device,
     )
     captured_audio = AudioBuffer(
         np.asarray(captured, dtype=np.float32).reshape(-1),

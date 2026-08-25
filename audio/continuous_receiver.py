@@ -40,6 +40,13 @@ class ContinuousReceiverConfig:
     @property
     def frame_sample_count(self) -> int:
         """Return generated waveform samples without external leading silence."""
+        if self.mode.waveform == "ofdm":
+            from dsp.ofdm import config_for_mode, frame_sample_count
+
+            return frame_sample_count(
+                self.payload_symbol_count,
+                config_for_mode(self.mode),
+            )
         ratio = samples_per_symbol(self.mode)
         taps = root_raised_cosine_taps(
             ratio,
@@ -62,6 +69,8 @@ class ContinuousReceiverConfig:
     @property
     def matched_filter_delay_samples(self) -> int:
         """Return the combined transmit/receive pulse-filter timing offset."""
+        if self.mode.waveform == "ofdm":
+            return 0
         ratio = samples_per_symbol(self.mode)
         taps = root_raised_cosine_taps(
             ratio,

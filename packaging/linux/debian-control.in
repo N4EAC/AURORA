@@ -1,0 +1,8 @@
+Package: aurora-hf-modem
+Version: @VERSION@
+Section: hamradio
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Aurora contributors
+Description: Aurora adaptive weak-signal HF digital modem
+ Aurora is a cross-platform digital communications application for amateur radio.

@@ -15,7 +15,7 @@ from modem.deep_validation import (
     _noise_audio,
     run_deep_validation,
 )
-from modem.mode_definition import AURORA_ROBUST_MODE
+from modem.mode_definition import AURORA_SINGLE_CARRIER_RESEARCH_MODE
 
 
 class DeepValidationTests(unittest.TestCase):
@@ -167,7 +167,7 @@ class DeepValidationTests(unittest.TestCase):
 
     def test_alternate_symbol_rate_preserves_clean_decode(self) -> None:
         mode = replace(
-            AURORA_ROBUST_MODE,
+            AURORA_SINGLE_CARRIER_RESEARCH_MODE,
             name="Aurora 62.5 symbol research",
             symbol_rate=62.5,
         )

@@ -44,7 +44,7 @@ def bits_to_bytes(bits: list[int]) -> bytes:
 def encode_payload(
     payload: bytes,
     flags: int = 0,
-    modulation: str = "qpsk",
+    modulation: str = "bpsk",
     *,
     interleaver_columns: int | None = None,
 ) -> EncodedTransmission:
@@ -62,7 +62,7 @@ def encode_payload(
 
 def decode_symbols(
     symbols: tuple[complex, ...],
-    modulation: str = "qpsk",
+    modulation: str = "bpsk",
     *,
     interleaver_columns: int | None = None,
 ) -> Frame:
@@ -86,7 +86,7 @@ def decode_transmission(transmission: EncodedTransmission) -> Frame:
 
 def decode_soft_symbols(
     symbols: tuple[complex, ...],
-    modulation: str = "qpsk",
+    modulation: str = "bpsk",
     *,
     noise_variance: float = 1.0,
     interleaver_columns: int | None = None,

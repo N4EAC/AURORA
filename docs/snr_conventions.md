@@ -31,9 +31,8 @@ Information-bit energy must additionally account for code rate, framing
 overhead, pilots, interleaving, and retransmission policy.
 
 Aurora labels the implemented value **coded Eb/N0**. It must not be presented
-as information-bit Eb/N0. For equal symbol rate and reference SNR, QPSK's coded
-Eb/N0 is approximately 3.01 dB lower than BPSK because it carries two coded
-bits per symbol.
+as information-bit Eb/N0. Aurora's defined OFDM profiles use BPSK and therefore
+carry one coded bit per active subcarrier symbol.
 
 ## Required reporting
 

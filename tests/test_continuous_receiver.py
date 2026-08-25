@@ -13,18 +13,27 @@ from audio.continuous_receiver import (
 )
 from dsp.core import encode_payload
 from dsp.waveform import modulate_audio
-from modem.mode_definition import AURORA_ROBUST_MODE
+from modem.mode_definition import (
+    AURORA_ROBUST_MODE,
+    AURORA_SINGLE_CARRIER_RESEARCH_MODE,
+    ModeDefinition,
+)
 
 
-def _test_waveform(message: bytes, leading: int = 731) -> tuple[AudioBuffer, int]:
+def _test_waveform(
+    message: bytes,
+    leading: int = 731,
+    mode: ModeDefinition = AURORA_ROBUST_MODE,
+) -> tuple[AudioBuffer, int]:
     transmission = encode_payload(
         message,
-        modulation=AURORA_ROBUST_MODE.modulation,
-        interleaver_columns=AURORA_ROBUST_MODE.interleaver_columns,
+        modulation=mode.modulation,
+        interleaver_columns=mode.interleaver_columns,
     )
     return (
         modulate_audio(
             transmission.symbols,
+            mode,
             leading_silence_samples=leading,
         ),
         len(transmission.symbols),
@@ -114,9 +123,10 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
         self.assertEqual(receiver.diagnostics.buffered_samples, 0)
 
     def test_recorded_phase_discontinuity_is_crc_repaired(self) -> None:
-        _, symbol_count = _test_waveform(b"A085")
+        mode = AURORA_SINGLE_CARRIER_RESEARCH_MODE
+        _, symbol_count = _test_waveform(b"A085", mode=mode)
         receiver = ContinuousAudioReceiver(
-            ContinuousReceiverConfig(symbol_count)
+            ContinuousReceiverConfig(symbol_count, mode=mode)
         )
         capture = read_wav(
             Path("tests/fixtures/audio/a085_transient_failure.wav")
@@ -130,9 +140,10 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
         self.assertEqual(receiver.diagnostics.phase_repairs, 1)
 
     def test_mid_frame_sample_loss_is_crc_repaired(self) -> None:
-        waveform, symbol_count = _test_waveform(b"sample loss")
+        mode = AURORA_SINGLE_CARRIER_RESEARCH_MODE
+        waveform, symbol_count = _test_waveform(b"sample loss", mode=mode)
         receiver = ContinuousAudioReceiver(
-            ContinuousReceiverConfig(symbol_count)
+            ContinuousReceiverConfig(symbol_count, mode=mode)
         )
         disrupted = _disrupt_waveform(
             waveform,
@@ -147,9 +158,10 @@ class ContinuousAudioReceiverTests(unittest.TestCase):
         self.assertEqual(events[0].recovery, "phase_inversion")
 
     def test_mid_frame_sample_duplication_is_crc_repaired(self) -> None:
-        waveform, symbol_count = _test_waveform(b"sample duplicate")
+        mode = AURORA_SINGLE_CARRIER_RESEARCH_MODE
+        waveform, symbol_count = _test_waveform(b"sample duplicate", mode=mode)
         receiver = ContinuousAudioReceiver(
-            ContinuousReceiverConfig(symbol_count)
+            ContinuousReceiverConfig(symbol_count, mode=mode)
         )
         disrupted = _disrupt_waveform(
             waveform,

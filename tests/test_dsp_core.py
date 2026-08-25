@@ -12,11 +12,16 @@ class DspCoreTests(unittest.TestCase):
         source = b"\x00\x5A\xFF"
         self.assertEqual(bits_to_bytes(bytes_to_bits(source)), source)
 
-    def test_qpsk_payload_round_trip(self) -> None:
+    def test_default_payload_round_trip_uses_bpsk(self) -> None:
         encoded = encode_payload(b"Aurora on HF", flags=5)
         decoded = decode_transmission(encoded)
         self.assertEqual(decoded.payload, b"Aurora on HF")
         self.assertEqual(decoded.flags, 5)
+        self.assertEqual(encoded.modulation, "bpsk")
+
+    def test_qpsk_payload_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported modulation"):
+            encode_payload(b"Aurora on HF", modulation="qpsk")
 
     def test_bpsk_payload_round_trip(self) -> None:
         encoded = encode_payload(b"weak signal", modulation="bpsk")

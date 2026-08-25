@@ -10,10 +10,9 @@ from dsp.soft_decision import soft_demapping
 
 
 class SoftDecisionTests(unittest.TestCase):
-    def test_qpsk_likelihood_signs_match_bits(self) -> None:
-        symbols = np.array([complex(0.6, -0.4), complex(-0.3, 0.8)])
-        likelihoods = soft_demapping(symbols, "qpsk", noise_variance=0.5)
-        self.assertEqual((likelihoods > 0.0).tolist(), [True, False, False, True])
+    def test_qpsk_soft_demapping_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported modulation"):
+            soft_demapping([complex(0.6, -0.4)], "qpsk", noise_variance=0.5)
 
     def test_soft_viterbi_recovers_noisy_codeword(self) -> None:
         random = np.random.default_rng(2026)
