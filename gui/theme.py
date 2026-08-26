@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import platform
-import tkinter as tk
-from tkinter import ttk
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +37,10 @@ def font_families(system: str | None = None) -> tuple[str, str]:
     return "DejaVu Sans", "DejaVu Sans Mono"
 
 
-def configure_theme(root: tk.Tk) -> AuroraPalette:
+def configure_theme(root) -> AuroraPalette:
     """Apply Aurora's portable ttk theme and return its color palette."""
+    from tkinter import ttk
+
     ui_font, mono_font = font_families()
     style = ttk.Style(root)
     if "clam" in style.theme_names():

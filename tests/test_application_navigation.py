@@ -3,12 +3,18 @@
 import unittest
 from unittest.mock import Mock
 
-from gui.application import _show_channel_results
+try:
+    from gui.application import _show_channel_results
+except ModuleNotFoundError as error:
+    if error.name != "tkinter":
+        raise
+    _show_channel_results = None
 
 
 class ApplicationNavigationTests(unittest.TestCase):
     """Verify workspace navigation without requiring a graphical display."""
 
+    @unittest.skipIf(_show_channel_results is None, "Tkinter is not installed")
     def test_channel_results_can_be_opened_before_a_test(self) -> None:
         notebook = Mock()
         channel_results = object()
