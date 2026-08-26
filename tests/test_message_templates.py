@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import unittest
 
-from modem.message_templates import expand_message_template
+from modem.message_templates import expand_message_template, prepare_message_template
 
 
 class MessageTemplateTests(unittest.TestCase):
@@ -15,6 +15,30 @@ class MessageTemplateTests(unittest.TestCase):
             now=datetime(2026, 8, 25, 14, 7, tzinfo=timezone.utc),
         )
         self.assertEqual(expanded, "Eduardo N4EAC at 14:07 UTC")
+
+    def test_target_tokens_and_bty_control_are_separated(self) -> None:
+        prepared = prepare_message_template(
+            "Hello <TNAME>, <TCALL> de <CALL>. <BTY>",
+            name="Eduardo",
+            callsign="N4EAC",
+            target_callsign="W1AW",
+            target_name="Joe",
+        )
+        self.assertEqual(prepared.text, "Hello Joe, W1AW de N4EAC.")
+        self.assertTrue(prepared.back_to_you)
+        self.assertNotIn("<BTY>", prepared.text)
+
+    def test_target_token_requires_selected_station(self) -> None:
+        with self.assertRaisesRegex(ValueError, "target station"):
+            prepare_message_template(
+                "Hello <TCALL>", name="Eduardo", callsign="N4EAC"
+            )
+
+    def test_bty_and_eoc_are_mutually_exclusive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot"):
+            prepare_message_template(
+                "Done <BTY> <EOC>", name="Eduardo", callsign="N4EAC"
+            )
 
 
 if __name__ == "__main__":

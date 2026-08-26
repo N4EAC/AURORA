@@ -23,7 +23,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 258 tests.
+- Expanded the automated regression suite to 272 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -130,10 +130,13 @@ automatic gain control.
 
 Native variable-length Aurora frames carry chat without AX.25 overhead or
 fixed-size padding. A protected bootstrap signals exact geometry, bandwidth,
-constellation/FEC, interleaver, payload type, and frame ID. Separate AX.25 UI
-frames carry callsign, grid, GPS position, altitude, and short station metadata
-only when needed. Compact native reception reports can refer to an earlier
-frame ID. See [the native transport](docs/native_transport.md) and
+constellation/FEC, interleaver, payload type, and frame ID. Native chat supports
+an optional, operator-accepted Reply Channel within 10 kHz, plus `<TCALL>`,
+`<TNAME>`, `<BTY>`, and `<EOC>` controls. It remains connectionless: RETURN TO
+NORMAL and timeout recovery work locally without requiring a received signal.
+Separate AX.25 UI frames carry callsign, operator name, grid, GPS position,
+altitude, and short station metadata only when needed. Compact native reception
+reports can refer to an earlier frame ID. See [the native transport](docs/native_transport.md) and
 [AX.25 station-data definition](docs/ax25_transport.md).
 
 The primary waveform maps protected constellation values across a provisional

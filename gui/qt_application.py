@@ -50,13 +50,19 @@ from dsp.transmit_quality import validate_transmit_audio
 from dsp.waveform import modulate_audio
 from modem.bandwidth_adaptation import fixed_bandwidth
 from modem.chat_transport import encode_chat_air_transmission
-from modem.message_templates import CANNED_MESSAGES, expand_message_template
+from modem.message_templates import CANNED_MESSAGES, prepare_message_template
+from modem.contact_session import (
+    DEFAULT_REPLY_WINDOW_SECONDS,
+    ContactManager,
+    TurnState,
+)
 from modem.station_data import StationData, encode_station_air_transmission
 from radio.hamlib_control import HamlibController
 from radio.bundled_hamlib import BundledHamlibConfig, BundledHamlibService
 from radio.hamlib_models import list_radio_models
 from radio.audio_tuning import MODEM_AUDIO_CENTER_HZ, dial_frequency_for_audio_center
 from radio.device import list_serial_ports
+from radio.split_control import FakeSplitController
 from gui.frequency_control import DigitFrequencySpinBox
 from util.session_debug_log import SessionDebugLog
 from util.application_version import APPLICATION_VERSION
@@ -202,6 +208,9 @@ class AuroraQtWindow(QMainWindow):
         self._stream: AudioInputStream | None = None
         self._hamlib: HamlibController | None = None
         self._hamlib_service: BundledHamlibService | None = None
+        self._contacts = ContactManager()
+        self._target_callsign = ""
+        self._target_name = ""
         self._cat_request_pending = False
         self._receiver_stop = threading.Event()
         self._radio_models = list_radio_models()
@@ -295,6 +304,10 @@ class AuroraQtWindow(QMainWindow):
         self.canned_message.addItems(CANNED_MESSAGES)
         self.canned_message.currentTextChanged.connect(self._select_canned_message)
         composer.addWidget(self.canned_message)
+        self.after_send = QComboBox()
+        self.after_send.addItems(("Continue", "Back to You", "End Contact"))
+        self.after_send.setToolTip("One-shot action applied to this transmission")
+        composer.addWidget(self.after_send)
         self.message = QLineEdit()
         self.message.setPlaceholderText("Type a message and press Enter to send")
         self.message.returnPressed.connect(self._transmit)
@@ -472,6 +485,26 @@ class AuroraQtWindow(QMainWindow):
         layout.addWidget(QLabel("WATERFALL"))
         self.waterfall = WaterfallWidget()
         layout.addWidget(self.waterfall)
+        reply_row = QHBoxLayout()
+        self.reply_channel_enabled = QCheckBox("Offer Reply Channel")
+        reply_row.addWidget(self.reply_channel_enabled)
+        self.reply_frequency = DigitFrequencySpinBox()
+        self.reply_frequency.setValue(14_074_000)
+        self.reply_frequency.setToolTip("Dial frequency where you will listen for replies")
+        reply_row.addWidget(self.reply_frequency)
+        self.reply_window = QSpinBox()
+        self.reply_window.setRange(30, 600)
+        self.reply_window.setValue(DEFAULT_REPLY_WINDOW_SECONDS)
+        self.reply_window.setSuffix(" s")
+        reply_row.addWidget(self.reply_window)
+        self.return_normal_button = QPushButton("RETURN TO NORMAL")
+        self.return_normal_button.setEnabled(False)
+        self.return_normal_button.clicked.connect(self._return_to_normal_operation)
+        reply_row.addWidget(self.return_normal_button)
+        self.contact_status = QLabel("SIMPLEX")
+        self.contact_status.setObjectName("value")
+        reply_row.addWidget(self.contact_status)
+        layout.addLayout(reply_row)
         return workspace
 
     def _bandwidth_changed(self, selection: str) -> None:
@@ -492,11 +525,13 @@ class AuroraQtWindow(QMainWindow):
             self.message.setText(template)
             self.message.setFocus()
 
-    def _expanded_message(self) -> str:
-        return expand_message_template(
+    def _prepared_message(self):
+        return prepare_message_template(
             self.message.text(),
             name=self.operator_name.text(),
             callsign=self.callsign.text(),
+            target_callsign=self._target_callsign,
+            target_name=self._target_name,
         )
 
     def _set_diagnostic(self, name: str, value: str) -> None:
@@ -538,6 +573,10 @@ class AuroraQtWindow(QMainWindow):
         self.altitude.setText(str(p.value("station/altitude", "")))
         self.bandwidth.setCurrentText(str(p.value("signal/bandwidth", "AUTO")))
         self.radio_frequency.setValue(int(p.value("radio/frequency_hz", 14_074_000)))
+        self.reply_frequency.setValue(
+            int(p.value("contact/reply_frequency_hz", self.radio_frequency.value()))
+        )
+        self.reply_window.setValue(int(p.value("contact/reply_window_seconds", 120)))
         self.radio_mode.setCurrentText(str(p.value("radio/mode", "USB-D")))
         model_index = self.hamlib_model.findData(int(p.value("cat/model_id", 3073)))
         if model_index >= 0:
@@ -570,6 +609,8 @@ class AuroraQtWindow(QMainWindow):
             "station/altitude": self.altitude.text().strip(),
             "signal/bandwidth": self.bandwidth.currentText(),
             "radio/frequency_hz": self.radio_frequency.value(),
+            "contact/reply_frequency_hz": self.reply_frequency.value(),
+            "contact/reply_window_seconds": self.reply_window.value(),
             "radio/mode": self.radio_mode.currentText(),
             "cat/model_id": self.hamlib_model.currentData(),
             "cat/device": self.cat_device.currentText(),
@@ -590,13 +631,27 @@ class AuroraQtWindow(QMainWindow):
     def _append(self, text: str) -> None:
         self.history.append(text)
 
-    def add_other_signal(self, frequency_hz: int, callsign: str, message: str) -> None:
+    def add_other_signal(
+        self,
+        frequency_hz: int,
+        callsign: str,
+        message: str,
+        *,
+        sender_name: str = "",
+        contact_id: int = 0,
+        reply_frequency_hz: int | None = None,
+        reply_window_seconds: int = 0,
+    ) -> None:
         """Insert an off-frequency CRC-valid decode into the activity list."""
         self.other_signals.insertRow(0)
         for column, value in enumerate((f"{frequency_hz} Hz", callsign, message)):
             item = QTableWidgetItem(value)
             item.setData(Qt.UserRole, int(frequency_hz))
             item.setData(Qt.UserRole + 1, callsign)
+            item.setData(Qt.UserRole + 2, reply_frequency_hz)
+            item.setData(Qt.UserRole + 3, contact_id)
+            item.setData(Qt.UserRole + 4, reply_window_seconds)
+            item.setData(Qt.UserRole + 5, sender_name)
             self.other_signals.setItem(0, column, item)
 
     def _show_other_signal_menu(self, position) -> None:
@@ -609,11 +664,56 @@ class AuroraQtWindow(QMainWindow):
         menu = QMenu(self.other_signals)
         tune = menu.addAction(f"Tune to {callsign}")
         prepare = menu.addAction(f"Tune and Prepare Contact with {callsign}")
+        reply_frequency = self.other_signals.item(row, 0).data(Qt.UserRole + 2)
+        reply_action = None
+        if reply_frequency:
+            reply_action = menu.addAction(f"Reply to {callsign} on {reply_frequency} Hz")
         selected = menu.exec(self.other_signals.viewport().mapToGlobal(position))
         if selected == tune:
             self._tune_to_other_signal(row, prepare_contact=False)
         elif selected == prepare:
             self._tune_to_other_signal(row, prepare_contact=True)
+        elif reply_action is not None and selected == reply_action:
+            self._accept_reply_channel(row)
+
+    def _accept_reply_channel(self, row: int) -> None:
+        """Accept a decoded Reply-To offer only after explicit operator action."""
+        item = self.other_signals.item(row, 0)
+        callsign_item = self.other_signals.item(row, 1)
+        if item is None or callsign_item is None or self._hamlib is None:
+            self._append("[REPLY CHANNEL BLOCKED] Connect Hamlib and select a valid offer.")
+            return
+        audio_frequency = int(item.data(Qt.UserRole))
+        reply_frequency = item.data(Qt.UserRole + 2)
+        try:
+            calling_frequency = dial_frequency_for_audio_center(
+                self.radio_frequency.value(), audio_frequency, self.radio_mode.currentText()
+            )
+            session = self._contacts.accept(
+                peer_callsign=callsign_item.text().strip().upper(),
+                peer_name=str(item.data(Qt.UserRole + 5) or ""),
+                contact_id=int(item.data(Qt.UserRole + 3) or 0),
+                received_frequency_hz=calling_frequency,
+                reply_frequency_hz=int(reply_frequency),
+                normal_frequency_hz=self.radio_frequency.value(),
+                mode=self.radio_mode.currentText(),
+                window_seconds=int(item.data(Qt.UserRole + 4) or 120),
+            )
+        except (TypeError, ValueError) as error:
+            self._append(f"[REPLY CHANNEL BLOCKED] {error}")
+            return
+        self._target_callsign = session.peer_callsign
+        self._target_name = session.peer_name
+        self.radio_frequency.setValue(session.receive_frequency_hz)
+        self._request_radio_frequency(session.receive_frequency_hz, "Reply Channel RX")
+        self.return_normal_button.setEnabled(True)
+        self.contact_status.setText(
+            f"SPLIT RX {session.receive_frequency_hz} / TX {session.transmit_frequency_hz}"
+        )
+        self._append(
+            f"[REPLY CHANNEL] {session.peer_callsign}: RX {session.receive_frequency_hz} Hz, "
+            f"TX {session.transmit_frequency_hz} Hz."
+        )
 
     def _tune_to_other_signal(self, row: int, *, prepare_contact: bool) -> None:
         """Retune the radio to center a decoded station and prepare a reply."""
@@ -623,6 +723,8 @@ class AuroraQtWindow(QMainWindow):
             return
         frequency = int(frequency_item.data(Qt.UserRole))
         callsign = callsign_item.text().strip().upper()
+        self._target_callsign = callsign
+        self._target_name = str(frequency_item.data(Qt.UserRole + 5) or "")
         if self._hamlib is None:
             self._append(f"[TUNE BLOCKED] Connect Hamlib to tune to {callsign}.")
             return
@@ -784,21 +886,44 @@ class AuroraQtWindow(QMainWindow):
                 self._append(f"[SPECTRUM RX ERROR] {event}")
                 self._stop_receiver()
                 return
+            if event.message is not None:
+                self._handle_contact_control(event.message)
             if event.message is not None and event.frequency_hz == MODEM_AUDIO_CENTER_HZ:
                 self._append(
                     f"[RX {event.frequency_hz} Hz/{event.message.callsign}] "
                     f"{event.message.text}"
                 )
+                if event.message.reply_frequency_hz is not None:
+                    self.add_other_signal(
+                        event.frequency_hz,
+                        event.message.callsign,
+                        event.message.text,
+                        sender_name=event.message.sender_name,
+                        contact_id=event.message.contact_id,
+                        reply_frequency_hz=event.message.reply_frequency_hz,
+                        reply_window_seconds=event.message.reply_window_seconds,
+                    )
             elif event.message is not None:
                 self.add_other_signal(
-                    event.frequency_hz, event.message.callsign, event.message.text
+                    event.frequency_hz,
+                    event.message.callsign,
+                    event.message.text,
+                    sender_name=event.message.sender_name,
+                    contact_id=event.message.contact_id,
+                    reply_frequency_hz=event.message.reply_frequency_hz,
+                    reply_window_seconds=event.message.reply_window_seconds,
                 )
             elif event.station is not None:
                 station = event.station.data
                 location = station.grid or "station update"
                 if station.latitude is not None:
                     location = f"GPS {station.latitude:+.5f}, {station.longitude:+.5f}"
-                self.add_other_signal(event.frequency_hz, station.callsign, location)
+                self.add_other_signal(
+                    event.frequency_hz,
+                    station.callsign,
+                    location,
+                    sender_name=station.operator_name or "",
+                )
             elif event.report is not None:
                 report = event.report
                 self.add_other_signal(
@@ -812,6 +937,33 @@ class AuroraQtWindow(QMainWindow):
             self._set_diagnostic("CRC", "PASS")
             self._set_diagnostic("FEC", "CORRECTED")
         self._poll_cat_events()
+
+    def _handle_contact_control(self, message) -> None:
+        """Apply only controls that match the active peer and contact ID."""
+        active = self._contacts.active
+        if active is None:
+            return
+        if message.destination not in {
+            "AURORA",
+            self.callsign.text().strip().upper(),
+        }:
+            return
+        if message.contact_id != active.contact_id:
+            return
+        if active.peer_callsign == "AURORA":
+            active = self._contacts.bind_peer(message.callsign, message.sender_name)
+            self._target_callsign = message.callsign
+            self._target_name = message.sender_name
+        if active is None or message.callsign != active.peer_callsign:
+            return
+        self._contacts.refresh(message.reply_window_seconds or self.reply_window.value())
+        if message.end_of_call:
+            self._append(f"[EOC] {message.callsign} ended the contact.")
+            self._return_to_normal_operation()
+        elif message.back_to_you:
+            self._contacts.update_turn(TurnState.PEER_PASSED_TURN)
+            self.contact_status.setText(f"YOUR TURN • {message.callsign}")
+            self._append(f"[BTY] {message.callsign} passed the turn to you.")
 
     def _toggle_cat(self) -> None:
         if self._hamlib is not None:
@@ -848,11 +1000,14 @@ class AuroraQtWindow(QMainWindow):
     def _disconnect_cat(self) -> None:
         controller = self._hamlib
         service = self._hamlib_service
+        active = self._contacts.return_to_normal()
         self._hamlib = None
         self._hamlib_service = None
         if controller is not None:
             try:
                 controller.set_ptt(False)
+                if active is not None:
+                    FakeSplitController(controller).restore(active.normal_frequency_hz)
             except Exception:
                 pass
             controller.close()
@@ -863,8 +1018,15 @@ class AuroraQtWindow(QMainWindow):
         self.apply_radio_button.setEnabled(False)
         self.station_data_button.setEnabled(False)
         self.radio_badge.setText("RADIO DISCONNECTED")
+        self.return_normal_button.setEnabled(False)
+        self.contact_status.setText("SIMPLEX")
 
     def _request_cat_status(self) -> None:
+        active = self._contacts.active
+        if active is not None and active.expired():
+            self._append("[REPLY CHANNEL] Offer expired; returning to normal operation.")
+            self._return_to_normal_operation()
+            return
         if self._hamlib is None or self._cat_request_pending:
             return
         self._cat_request_pending = True
@@ -928,6 +1090,35 @@ class AuroraQtWindow(QMainWindow):
 
         threading.Thread(target=worker, name="AuroraHamlibTune", daemon=True).start()
 
+    def _return_to_normal_operation(self) -> None:
+        """End local split state immediately without requiring an RF EOC."""
+        session = self._contacts.return_to_normal()
+        self._target_callsign = ""
+        self._target_name = ""
+        self.reply_channel_enabled.setChecked(False)
+        self.after_send.setCurrentText("Continue")
+        self.return_normal_button.setEnabled(False)
+        self.contact_status.setText("RETURNING" if session is not None else "SIMPLEX")
+        if session is None:
+            self._append("[CONTACT] Already in normal operation.")
+            return
+        controller = self._hamlib
+        if controller is None:
+            self.contact_status.setText("SIMPLEX")
+            self._append("[CONTACT] Split state cleared locally; Hamlib is disconnected.")
+            return
+        passband_hz = self._selected_mode().occupied_bandwidth_hz
+
+        def worker() -> None:
+            try:
+                FakeSplitController(controller).restore(session.normal_frequency_hz)
+                controller.set_mode(session.normal_mode, passband_hz)
+                self._cat_events.put(("normal_restored", session.normal_frequency_hz))
+            except Exception as error:
+                self._cat_events.put(("cat_error", error))
+
+        threading.Thread(target=worker, name="AuroraReturnNormal", daemon=True).start()
+
     def _ptt_arm_changed(self, armed: bool) -> None:
         self.transmit_button.setEnabled(armed and self._hamlib is not None)
         self.station_data_button.setEnabled(armed and self._hamlib is not None)
@@ -976,20 +1167,59 @@ class AuroraQtWindow(QMainWindow):
                 self._append("[CAT] Radio frequency and mode applied.")
             elif kind == "frequency_applied":
                 self._append(f"[CAT] Tuned to {values[0]} Hz ({values[1]}).")
+            elif kind == "normal_restored":
+                self.radio_frequency.setValue(values[0])
+                self.contact_status.setText("SIMPLEX")
+                self._append(f"[CONTACT] Returned to normal operation on {values[0]} Hz.")
             elif kind == "tx_complete":
                 self.transmit_button.setEnabled(self.ptt_arm.isChecked())
                 self.station_data_button.setEnabled(self.ptt_arm.isChecked())
-                if values[0] is not None:
-                    self._append(f"[TX ERROR] {values[0]}")
+                error, back_to_you, end_of_call, return_frequency = values
+                if return_frequency is not None:
+                    self.radio_frequency.setValue(return_frequency)
+                if back_to_you and error is None:
+                    self._contacts.update_turn(TurnState.WAITING_FOR_REPLY)
+                    self.contact_status.setText("WAITING FOR REPLY")
+                if end_of_call:
+                    ended = self._contacts.return_to_normal()
+                    self._target_callsign = ""
+                    self._target_name = ""
+                    self.reply_channel_enabled.setChecked(False)
+                    self.return_normal_button.setEnabled(False)
+                    self.contact_status.setText("SIMPLEX")
+                    if ended is not None:
+                        self._append("[EOC] Contact ended; returned to normal operation.")
+                if error is not None:
+                    self._append(f"[TX ERROR] {error}")
             elif kind == "cat_error":
                 self.cat_button.setEnabled(True)
                 self._append(f"[CAT ERROR] {values[0]}")
 
-    def _build_transmit_audio(self, message_text: str | None = None) -> AudioBuffer:
+    def _build_transmit_audio(
+        self,
+        message_text: str,
+        *,
+        back_to_you: bool = False,
+        end_of_call: bool = False,
+    ) -> AudioBuffer:
         """Build conditioned radio audio for the current operator message."""
         mode = mode_at_frequency(self._selected_mode(), MODEM_AUDIO_CENTER_HZ)
+        session = self._contacts.active
         transmission = encode_chat_air_transmission(
-            self.callsign.text(), message_text or self._expanded_message(), mode=mode
+            self.callsign.text(),
+            message_text,
+            destination=self._target_callsign or "AURORA",
+            mode=mode,
+            sender_name=self.operator_name.text(),
+            contact_id=session.contact_id if session is not None else 0,
+            reply_frequency_hz=(
+                session.receive_frequency_hz if session is not None else None
+            ),
+            reply_window_seconds=(
+                self.reply_window.value() if session is not None else 0
+            ),
+            back_to_you=back_to_you,
+            end_of_call=end_of_call,
         )
         waveform = modulate_audio(
             transmission.symbols,
@@ -1020,6 +1250,7 @@ class AuroraQtWindow(QMainWindow):
                 latitude=float(latitude_text) if latitude_text else None,
                 longitude=float(longitude_text) if longitude_text else None,
                 altitude_m=float(altitude_text) if altitude_text else None,
+                operator_name=self.operator_name.text().strip() or None,
             )
             mode = mode_at_frequency(self._selected_mode(), MODEM_AUDIO_CENTER_HZ)
             transmission = encode_station_air_transmission(
@@ -1049,23 +1280,46 @@ class AuroraQtWindow(QMainWindow):
             location = "GPS included"
         self._append(f"[TX AX.25/{station.callsign}] {location}")
 
-    def _start_radio_playback(self, audio: AudioBuffer, output_index: int) -> None:
+    def _start_radio_playback(
+        self,
+        audio: AudioBuffer,
+        output_index: int,
+        *,
+        back_to_you: bool = False,
+        end_of_call: bool = False,
+    ) -> None:
         """Key PTT and play one already-conditioned Aurora transmission."""
         self.transmit_button.setEnabled(False)
         self.station_data_button.setEnabled(False)
+        session = self._contacts.active
 
         def worker() -> None:
+            error = None
+            return_frequency = None
             try:
+                if session is not None and session.split:
+                    FakeSplitController(self._hamlib).prepare_transmit(
+                        session.transmit_frequency_hz
+                    )
                 self._hamlib.set_ptt(True)
                 play_audio(audio, blocking=True, device=output_index)
-                self._cat_events.put(("tx_complete", None))
-            except Exception as error:
-                self._cat_events.put(("tx_complete", error))
+            except Exception as caught:
+                error = caught
             finally:
                 try:
                     self._hamlib.set_ptt(False)
-                except Exception as error:
-                    self._cat_events.put(("cat_error", error))
+                    if session is not None and session.split:
+                        return_frequency = (
+                            session.normal_frequency_hz
+                            if end_of_call
+                            else session.receive_frequency_hz
+                        )
+                        FakeSplitController(self._hamlib).finish_transmit(return_frequency)
+                except Exception as restore_error:
+                    error = error or restore_error
+                self._cat_events.put(
+                    ("tx_complete", error, back_to_you, end_of_call, return_frequency)
+                )
 
         threading.Thread(target=worker, name="AuroraRadioTransmit", daemon=True).start()
 
@@ -1075,15 +1329,46 @@ class AuroraQtWindow(QMainWindow):
             return
         try:
             output = self._output_devices[self.output_device.currentText()]
-            expanded_message = self._expanded_message()
-            audio = self._build_transmit_audio(expanded_message)
+            prepared = self._prepared_message()
+            selection = self.after_send.currentText()
+            back_to_you = prepared.back_to_you or selection == "Back to You"
+            end_of_call = prepared.end_of_call or selection == "End Contact"
+            if back_to_you and end_of_call:
+                raise ValueError("BTY and EOC cannot be sent together")
+            if self.reply_channel_enabled.isChecked() and self._contacts.active is None:
+                session = self._contacts.offer(
+                    local_callsign=self.callsign.text(),
+                    normal_frequency_hz=self.radio_frequency.value(),
+                    reply_frequency_hz=self.reply_frequency.value(),
+                    mode=self.radio_mode.currentText(),
+                    window_seconds=self.reply_window.value(),
+                )
+                self.return_normal_button.setEnabled(True)
+                self.contact_status.setText(
+                    f"SPLIT RX {session.receive_frequency_hz} / TX {session.transmit_frequency_hz}"
+                )
+            if (back_to_you or end_of_call) and self._contacts.active is None:
+                raise ValueError("BTY and EOC require an active Reply Channel contact")
+            if self._contacts.active is not None:
+                self._contacts.refresh(self.reply_window.value())
+            audio = self._build_transmit_audio(
+                prepared.text,
+                back_to_you=back_to_you,
+                end_of_call=end_of_call,
+            )
         except Exception as error:
             self._append(f"[AUDIO TX ERROR] {error}")
             return
-        self._start_radio_playback(audio, output.index)
+        self.after_send.setCurrentText("Continue")
+        self._start_radio_playback(
+            audio,
+            output.index,
+            back_to_you=back_to_you,
+            end_of_call=end_of_call,
+        )
         self._append(
             f"[TX {MODEM_AUDIO_CENTER_HZ} Hz/{self.callsign.text()}] "
-            f"{expanded_message}"
+            f"{prepared.text}"
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802

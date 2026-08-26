@@ -38,6 +38,7 @@ Aurora defines a compact, versioned information field for station metadata:
 | 2 | Latitude and longitude as signed integer microdegrees |
 | 3 | Altitude as signed integer centimeters |
 | 4 | UTF-8 operator comment, at most 80 bytes |
+| 5 | UTF-8 operator name, at most 80 bytes |
 
 The AX.25 source address carries the station callsign and optional SSID. The
 default destination is `AURORA`. The information field begins with `AU`, then

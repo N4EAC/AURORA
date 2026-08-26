@@ -96,10 +96,9 @@ class MultichannelAudioReceiver:
             raise ValueError("No receive centers fit the selected bandwidth")
         self._mode = mode
         self._bootstrap_symbols = bootstrap_symbol_count(mode)
-        minimum_symbols = chat_payload_symbol_count("x", mode)
         maximum_symbols = chat_payload_symbol_count("x" * CHAT_TEXT_BYTES, mode)
         config = config_for_mode(mode)
-        self._minimum_samples = frame_sample_count(minimum_symbols, config)
+        self._minimum_samples = frame_sample_count(self._bootstrap_symbols, config)
         self._maximum_samples = (
             frame_sample_count(maximum_symbols, config) + mode.audio_sample_rate * 2
         )
@@ -152,9 +151,16 @@ class MultichannelAudioReceiver:
         self, capture: AudioBuffer, frequency_hz: int
     ) -> MultichannelDecodeEvent | None:
         mode = mode_at_frequency(self._mode, frequency_hz)
+        samples = np.asarray(capture.samples, dtype=np.float64).reshape(-1)
+        spectrum = np.fft.rfft(samples)
+        bins = np.fft.rfftfreq(len(samples), 1.0 / capture.sample_rate)
+        half_width = mode.occupied_bandwidth_hz / 2.0 + 100.0
+        spectrum[(bins < frequency_hz - half_width) | (bins > frequency_hz + half_width)] = 0
+        isolated = np.fft.irfft(spectrum, n=len(samples)).astype(np.float32)
+        candidate_capture = AudioBuffer(isolated, capture.sample_rate)
         try:
             bootstrap_result = demodulate_audio(
-                capture, self._bootstrap_symbols, mode
+                candidate_capture, self._bootstrap_symbols, mode
             )
             bootstrap_frame = decode_soft_symbols(
                 tuple(bootstrap_result.symbols),
@@ -177,7 +183,9 @@ class MultichannelAudioReceiver:
             return None
         total_symbols = self._bootstrap_symbols + header.payload_symbol_count
         try:
-            candidates = demodulate_audio_candidates(capture, total_symbols, mode)
+            candidates = demodulate_audio_candidates(
+                candidate_capture, total_symbols, mode
+            )
         except ValueError:
             return None
         for recovered in candidates:

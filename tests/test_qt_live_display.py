@@ -101,6 +101,47 @@ class QtLiveDisplayTests(unittest.TestCase):
         self.assertEqual(window.radio_frequency.value(), 14_074_000)
         window.close()
 
+    def test_reply_offer_is_accepted_only_by_operator_action(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window._hamlib = MagicMock()
+        window.radio_frequency.setValue(7_117_000)
+        window.add_other_signal(
+            1_500,
+            "W1AW",
+            "CQ",
+            sender_name="Hiram",
+            contact_id=42,
+            reply_frequency_hz=7_107_000,
+            reply_window_seconds=120,
+        )
+        self.assertIsNone(window._contacts.active)
+        with patch.object(window, "_request_radio_frequency") as request:
+            window._accept_reply_channel(0)
+        session = window._contacts.active
+        self.assertIsNotNone(session)
+        self.assertEqual(session.receive_frequency_hz, 7_117_000)
+        self.assertEqual(session.transmit_frequency_hz, 7_107_000)
+        self.assertTrue(window.return_normal_button.isEnabled())
+        request.assert_called_once_with(7_117_000, "Reply Channel RX")
+        window._hamlib = None
+        window.close()
+
+    def test_manual_return_clears_reply_channel_without_radio_or_eoc(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window._contacts.offer(
+            local_callsign="K1ABC",
+            normal_frequency_hz=7_117_000,
+            reply_frequency_hz=7_107_000,
+            mode="USB-D",
+        )
+        window.return_normal_button.setEnabled(True)
+        window._return_to_normal_operation()
+        self.assertIsNone(window._contacts.active)
+        self.assertFalse(window.return_normal_button.isEnabled())
+        self.assertEqual(window.contact_status.text(), "SIMPLEX")
+        self.assertIn("cleared locally", window.history.toPlainText())
+        window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

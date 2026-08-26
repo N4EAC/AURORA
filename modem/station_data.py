@@ -37,6 +37,7 @@ class StationData:
     longitude: float | None = None
     altitude_m: float | None = None
     comment: str | None = None
+    operator_name: str | None = None
 
     def __post_init__(self) -> None:
         address = Ax25Address.parse(self.callsign)
@@ -60,6 +61,11 @@ class StationData:
             if len(comment.encode("utf-8")) > 80:
                 raise ValueError("Station comment must not exceed 80 UTF-8 bytes")
             object.__setattr__(self, "comment", comment or None)
+        if self.operator_name is not None:
+            name = self.operator_name.strip()
+            if len(name.encode("utf-8")) > 80:
+                raise ValueError("Operator name must not exceed 80 UTF-8 bytes")
+            object.__setattr__(self, "operator_name", name or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +98,8 @@ def encode_station_information(data: StationData) -> bytes:
         encoded.extend(_field(3, struct.pack(">i", round(data.altitude_m * 100))))
     if data.comment is not None:
         encoded.extend(_field(4, data.comment.encode("utf-8")))
+    if data.operator_name is not None:
+        encoded.extend(_field(5, data.operator_name.encode("utf-8")))
     return bytes(encoded)
 
 
@@ -130,9 +138,12 @@ def decode_station_information(callsign: str, encoded: bytes) -> StationData:
                 raise Ax25Error("Station altitude field has invalid length")
             altitude = struct.unpack(">i", values[3])[0] / 100.0
         comment = values[4].decode("utf-8") if 4 in values else None
+        operator_name = values[5].decode("utf-8") if 5 in values else None
     except (UnicodeDecodeError, struct.error) as error:
         raise Ax25Error("Station-data field encoding is invalid") from error
-    return StationData(callsign, grid, latitude, longitude, altitude, comment)
+    return StationData(
+        callsign, grid, latitude, longitude, altitude, comment, operator_name
+    )
 
 
 def build_station_ax25(

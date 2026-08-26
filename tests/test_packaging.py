@@ -64,6 +64,8 @@ class PackagingTests(unittest.TestCase):
     def test_spec_includes_qt_entry_and_excludes_tk(self) -> None:
         specification = SPEC_PATH.read_text(encoding="utf-8")
         self.assertIn('"gui.qt_application"', specification)
+        self.assertIn('"modem.contact_session"', specification)
+        self.assertIn('"radio.split_control"', specification)
         self.assertIn('"tkinter"', specification)
         self.assertIn('"_tkinter"', specification)
 

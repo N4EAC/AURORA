@@ -56,6 +56,7 @@ class Ax25Tests(unittest.TestCase):
             longitude=-77.0365,
             altitude_m=18.25,
             comment="Aurora test station",
+            operator_name="Eduardo",
         )
         decoded = parse_station_ax25(build_station_ax25(original))
         self.assertEqual(str(decoded.destination), "AURORA")
@@ -65,6 +66,7 @@ class Ax25Tests(unittest.TestCase):
         self.assertAlmostEqual(decoded.data.longitude, original.longitude, places=6)
         self.assertEqual(decoded.data.altitude_m, original.altitude_m)
         self.assertEqual(decoded.data.comment, original.comment)
+        self.assertEqual(decoded.data.operator_name, "Eduardo")
 
     def test_ax25_transport_coexists_with_native_aurora_frames(self) -> None:
         transmission = encode_station_transmission(
