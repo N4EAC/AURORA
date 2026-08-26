@@ -49,8 +49,10 @@ analysis = Analysis(
     pathex=[str(PROJECT_ROOT)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["serial.tools.list_ports", "sounddevice"],
-    excludes=[],
+    hiddenimports=["gui.qt_application", "serial.tools.list_ports", "sounddevice"],
+    # Native packages ship the supported Qt interface. Keeping Tk out avoids an
+    # unnecessary python3-tk build dependency on Ubuntu and Fedora.
+    excludes=["tkinter", "_tkinter", "gui.application"],
     noarchive=False,
 )
 pyz = PYZ(analysis.pure)

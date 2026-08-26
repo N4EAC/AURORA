@@ -22,7 +22,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 241 tests.
+- Expanded the automated regression suite to 242 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -338,7 +338,8 @@ Run the current desktop shell with:
 ```
 
 Aurora prefers the PySide6 interface. During the transition, the previous
-Tkinter interface remains available with `aurora.py --tk`.
+Tkinter interface remains available from a source checkout with
+`aurora.py --tk`; self-contained installers include the supported Qt UI only.
 
 The primary interface displays only samples captured from the selected radio
 audio input. Aurora bundles and starts its own Hamlib `rigctld` service by

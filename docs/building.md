@@ -3,6 +3,9 @@
 Aurora's release builds are self-contained desktop applications. Each build
 includes Python, Qt, Aurora's dependencies, and the private Hamlib `rigctld`
 runtime. End users do not need Python, Hamlib, or Inno Setup.
+Native packages contain the supported Qt interface and intentionally exclude
+the source-only Tk compatibility interface. Linux builds therefore do not
+require the separately packaged `python3-tk` module.
 
 Build on the target operating system. PyInstaller output is platform-specific;
 cross-compiling these installers is not supported.

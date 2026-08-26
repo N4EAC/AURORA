@@ -6,10 +6,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import aurora
 from tools import bootstrap_hamlib
 
 
 VERIFY_PATH = Path(__file__).resolve().parent.parent / "packaging" / "verify_bundle.py"
+SPEC_PATH = Path(__file__).resolve().parent.parent / "packaging" / "aurora.spec"
 VERIFY_SPEC = importlib.util.spec_from_file_location("aurora_verify_bundle", VERIFY_PATH)
 assert VERIFY_SPEC is not None and VERIFY_SPEC.loader is not None
 VERIFY_MODULE = importlib.util.module_from_spec(VERIFY_SPEC)
@@ -41,6 +43,17 @@ class PackagingTests(unittest.TestCase):
             (bundle / "SOURCE.txt").touch()
             with self.assertRaisesRegex(RuntimeError, "rigctld"):
                 verify_bundle(bundle)
+
+    def test_frozen_application_rejects_source_only_tk_ui(self) -> None:
+        with patch.object(aurora.sys, "frozen", True, create=True):
+            with self.assertRaisesRegex(RuntimeError, "Qt UI only"):
+                aurora.select_ui_runner(["--tk"])
+
+    def test_spec_includes_qt_entry_and_excludes_tk(self) -> None:
+        specification = SPEC_PATH.read_text(encoding="utf-8")
+        self.assertIn('"gui.qt_application"', specification)
+        self.assertIn('"tkinter"', specification)
+        self.assertIn('"_tkinter"', specification)
 
 
 if __name__ == "__main__":
