@@ -22,7 +22,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 243 tests.
+- Expanded the automated regression suite to 247 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -264,14 +264,16 @@ not receiver estimates. This specific symbol-domain test does not exercise
 timing impairment; timing is covered by separate waveform and continuous-audio
 tests.
 
-Each application run creates a structured debug log in `logs/` named
+Each application run creates a structured debug log named
 `aurora_test_session_YYYYMMDD_HHMMSS_ffffff.log`. Test starts, results, errors,
 injected conditions, frame statistics, bit-error counts, and timing information
 are flushed immediately. Local codec and symbol-domain benchmark events record
 message length rather than content. Audio-loopback and continuous-receive events
 currently record transmitted or received test text for reproducibility. The
 latest session log can be reviewed after testing without exporting data from
-the interface.
+the interface. Source runs use the project `logs/` directory. Installed builds
+use a writable per-user location: the XDG state directory on Linux,
+`~/Library/Logs/Aurora` on macOS, or `%LOCALAPPDATA%\Aurora\logs` on Windows.
 
 The **Channel Results** tab also provides a cancellable robustness sweep. Its
 default range is -24 through +10 dB in a 2,500 Hz reference bandwidth, using
@@ -367,7 +369,8 @@ installer beneath `dist/installer/`. See [the build guide](docs/building.md)
 for prerequisites and release controls.
 
 Aurora records startup, shutdown, and future operational messages in
-`logs/aurora.log`. Log files rotate automatically to limit disk usage.
+`aurora.log` in that per-user log directory. Log files rotate automatically to
+limit disk usage.
 
 Run the automated tests with:
 
