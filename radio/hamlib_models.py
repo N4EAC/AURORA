@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 
 from tools.bootstrap_hamlib import rigctld_path
+from radio.subprocess_support import hidden_process_kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,7 @@ def list_radio_models(executable: Path | None = None) -> tuple[HamlibRadioModel,
             capture_output=True,
             text=True,
             timeout=5.0,
+            **hidden_process_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return FALLBACK_MODELS

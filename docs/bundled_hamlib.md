@@ -11,7 +11,9 @@ target platform and include that platform's runtime directory.
 
 Aurora starts the private service only after the operator chooses a named radio
 model, CAT device, baud rate, and Connect. It binds to localhost and stops with
-Aurora. PTT Control defaults to enabled, but SEND remains blocked until Hamlib
+Aurora. On Windows it runs as a background process without opening a command
+window; diagnostics remain captured by Aurora. PTT Control defaults to enabled,
+but SEND remains blocked until Hamlib
 connects; PTT is keyed only for an explicit SEND action and is always released
 after playback or an error. An external `rigctld` endpoint remains available
 for advanced station setups.

@@ -9,6 +9,7 @@ import subprocess
 import time
 
 from tools.bootstrap_hamlib import rigctld_path
+from radio.subprocess_support import hidden_process_kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,7 @@ class BundledHamlibService:
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            **hidden_process_kwargs(),
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:

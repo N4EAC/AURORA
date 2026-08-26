@@ -22,7 +22,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 247 tests.
+- Expanded the automated regression suite to 250 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
