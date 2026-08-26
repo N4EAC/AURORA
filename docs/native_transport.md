@@ -34,8 +34,10 @@ expanded text and do not need to understand token syntax.
 ## Decoded-station actions
 
 Other Signals rows retain the decoded callsign and audio center. Their context
-menu can tune the shared TX/RX center or tune and prepare a directed native
-reply. Double-clicking a row performs the prepare-contact action. Aurora never
-transmits automatically; the operator must review and select SEND. Later
+menu can retune the Hamlib-controlled radio dial so the signal moves to Aurora's
+fixed 1,500 Hz audio center, or retune and prepare a directed native reply.
+USB and LSB dial adjustments use opposite signs. Double-clicking a row performs
+the prepare-contact action. Aurora never transmits automatically; the operator
+must review and select SEND. Later
 exchange-state, acknowledgement, and signal-report actions can extend this
 menu without changing the native chat format.

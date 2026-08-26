@@ -41,7 +41,8 @@ class SpectrumView(ttk.Frame):
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", lambda event: self._draw())
-        self.canvas.bind("<Button-1>", self._select_from_pointer)
+        if self.selection_changed is not None:
+            self.canvas.bind("<Button-1>", self._select_from_pointer)
 
     def update_spectrum(self, frame: SpectrumFrame) -> None:
         """Display a newly computed spectrum frame."""
@@ -49,7 +50,7 @@ class SpectrumView(ttk.Frame):
         self._draw()
 
     def set_selected_frequency(self, frequency_hz: int) -> None:
-        """Update the shared TX/RX frequency marker."""
+        """Update the modem-center frequency marker."""
         self.selected_frequency_hz = max(
             self.minimum_frequency_hz,
             min(self.maximum_frequency_hz, int(frequency_hz)),
@@ -84,7 +85,7 @@ class SpectrumView(ttk.Frame):
         self.canvas.create_text(
             marker_x,
             3,
-            text=f"TX/RX {self.selected_frequency_hz} Hz",
+            text=f"MODEM CENTER {self.selected_frequency_hz} Hz",
             fill=PALETTE.blue,
             anchor=tk.N,
             font=("TkDefaultFont", 8),

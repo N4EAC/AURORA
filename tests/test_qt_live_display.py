@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -61,7 +62,7 @@ class QtLiveDisplayTests(unittest.TestCase):
         first.latitude.setText("41.1")
         first.longitude.setText("-72.2")
         first.bandwidth.setCurrentText("2.3 kHz")
-        first.frequency.setValue(1_700)
+        first.radio_frequency.setValue(7_074_000)
         first._apply_theme("Amber")
         first.close()
 
@@ -72,17 +73,32 @@ class QtLiveDisplayTests(unittest.TestCase):
         self.assertEqual(second.latitude.text(), "41.1")
         self.assertEqual(second.longitude.text(), "-72.2")
         self.assertEqual(second.bandwidth.currentText(), "2.3 kHz")
-        self.assertEqual(second.frequency.value(), 1_700)
+        self.assertEqual(second.radio_frequency.value(), 7_074_000)
         self.assertEqual(second.preferences.value("appearance/theme"), "Amber")
         second.close()
 
     def test_other_signal_can_tune_and_prepare_contact(self) -> None:
         window = AuroraQtWindow(preferences=self.preferences)
+        window._hamlib = MagicMock()
+        window.radio_frequency.setValue(14_074_000)
+        window.radio_mode.setCurrentText("USB-D")
         window.add_other_signal(1_700, "W1AW", "CQ")
-        window._tune_to_other_signal(0, prepare_contact=True)
-        self.assertEqual(window.frequency.value(), 1_700)
+        with patch.object(window, "_request_radio_frequency") as request:
+            window._tune_to_other_signal(0, prepare_contact=True)
+        self.assertEqual(window.radio_frequency.value(), 14_074_200)
+        request.assert_called_once_with(
+            14_074_200, "W1AW from 1700 Hz to 1500 Hz"
+        )
         self.assertEqual(window.message.text(), "W1AW de <CALL>")
-        self.assertIn("reply prepared for W1AW", window.history.toPlainText())
+        self.assertIn("Centering W1AW", window.history.toPlainText())
+        window.close()
+
+    def test_other_signal_tuning_requires_hamlib(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window.add_other_signal(1_700, "W1AW", "CQ")
+        window._tune_to_other_signal(0, prepare_contact=False)
+        self.assertIn("Connect Hamlib", window.history.toPlainText())
+        self.assertEqual(window.radio_frequency.value(), 14_074_000)
         window.close()
 
 

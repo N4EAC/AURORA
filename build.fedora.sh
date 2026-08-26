@@ -20,6 +20,7 @@ if [[ "${AURORA_SKIP_TESTS:-0}" != "1" ]]; then
         "$BUILD_VENV/bin/python" -m unittest discover -s tests -q
 fi
 "$BUILD_VENV/bin/python" packaging/prepare_build.py "$VERSION"
+"$BUILD_VENV/bin/python" packaging/validate_operator_configuration.py
 "$BUILD_VENV/bin/python" tools/bootstrap_hamlib.py
 "$BUILD_VENV/bin/python" packaging/stage_hamlib.py
 

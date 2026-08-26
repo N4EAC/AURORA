@@ -18,11 +18,12 @@ weak-signal communication under real-world HF propagation conditions.
 - Added persistent Station ID, CAT Control, and Audio setup, including named
   Hamlib radios, dockable panels, Dark/Amber/Green themes, and Enter-to-send.
 - Added live 100–3000 Hz radio-audio spectrum and compact waterfall displays,
-  profile-bounded TX/RX tuning, and simultaneous CRC-gated decoding.
+  fixed-center modem operation, digit-selectable Hamlib tuning, and simultaneous
+  CRC-gated decoding.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 250 tests.
+- Expanded the automated regression suite to 258 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -221,19 +222,22 @@ or an error.
 ## Spectrum and waterfall
 
 Aurora includes a Hann-windowed FFT analyzer, live spectrum, and compact
-bounded waterfall driven only by the selected radio audio input. Clicking the
-Spectrum selection changes the shared TX/RX audio center within bounds that
-keep the complete selected bandwidth inside the 100–3000 Hz working passband.
-Selected-frequency traffic appears in Messages; other CRC-valid decoded
-traffic appears in the independent Other Signals dock. Aurora does not
-generate a pretend spectrum or open audio automatically.
+bounded waterfall driven only by the selected radio audio input. Aurora's TX
+and primary RX modem center is fixed at 1,500 Hz. The receiver scans compatible
+signal centers across the 100–3000 Hz working passband; primary-center traffic
+appears in Messages and other CRC-valid traffic appears in the independent
+Other Signals dock. The spectrum does not move the modem or transmitter.
+Aurora does not generate a pretend spectrum or open audio automatically.
 
 ## Operator interface
 
 The compact main window shows radio frequency, radio mode, station callsign,
 occupied bandwidth, synchronization, SNR, frequency offset, timing, CRC, and
 FEC status. Messages and Other Signals are independently dockable and
-resizable. Select **SEND** or press Enter to transmit.
+resizable. Click a radio-frequency digit and use the mouse wheel or Up/Down
+keys to tune that digit through Hamlib; Left/Right selects another digit.
+Decoded-station actions retune USB or LSB so the selected signal moves to the
+1,500 Hz modem center. Select **SEND** or press Enter to transmit.
 
 The **Setup** menu provides Station ID, CAT Control, and Audio tabs. These
 contain callsign/grid, named radio model, CAT serial and `rigctld` settings,

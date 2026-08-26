@@ -8,7 +8,7 @@ import secrets
 import threading
 
 import numpy as np
-from PySide6.QtCore import QPointF, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,7 +41,6 @@ from audio.buffer import AudioBuffer
 from audio.device import compatible_outputs, list_audio_devices
 from audio.multichannel_receiver import (
     MultichannelAudioReceiver,
-    audio_center_limits,
     mode_at_frequency,
 )
 from audio.playback import condition_playback, play_audio, stop_playback
@@ -56,7 +55,9 @@ from modem.station_data import StationData, encode_station_air_transmission
 from radio.hamlib_control import HamlibController
 from radio.bundled_hamlib import BundledHamlibConfig, BundledHamlibService
 from radio.hamlib_models import list_radio_models
+from radio.audio_tuning import MODEM_AUDIO_CENTER_HZ, dial_frequency_for_audio_center
 from radio.device import list_serial_ports
+from gui.frequency_control import DigitFrequencySpinBox
 from util.session_debug_log import SessionDebugLog
 from util.application_version import APPLICATION_VERSION
 
@@ -77,30 +78,18 @@ THEMES = {
 
 
 class SpectrumWidget(QWidget):
-    """Efficient spectrum plot with a shared clickable TX/RX marker."""
-
-    frequency_selected = Signal(int)
+    """Efficient receive spectrum with Aurora's fixed modem-center marker."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setMinimumHeight(110)
         self._frame: SpectrumFrame | None = None
-        self._selected_hz = 1_500
+        self._selected_hz = MODEM_AUDIO_CENTER_HZ
 
     def set_frame(self, frame: SpectrumFrame) -> None:
         """Replace the spectrum data and schedule a repaint."""
         self._frame = frame
         self.update()
-
-    def set_frequency(self, frequency_hz: int) -> None:
-        """Move the shared TX/RX marker."""
-        self._selected_hz = max(100, min(3_000, int(frequency_hz)))
-        self.update()
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        fraction = max(0.0, min(1.0, event.position().x() / max(self.width(), 1)))
-        frequency = round((100 + fraction * 2_900) / 100) * 100
-        self.frequency_selected.emit(frequency)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
@@ -118,7 +107,7 @@ class SpectrumWidget(QWidget):
         marker_x = (self._selected_hz - 100) / 2_900 * self.width()
         painter.setPen(QPen(BLUE, 2))
         painter.drawLine(int(marker_x), 0, int(marker_x), plot_bottom)
-        painter.drawText(int(marker_x) + 5, 14, f"TX/RX {self._selected_hz} Hz")
+        painter.drawText(int(marker_x) + 5, 14, f"MODEM CENTER {self._selected_hz} Hz")
         if self._frame is None:
             return
         visible = (
@@ -217,6 +206,10 @@ class AuroraQtWindow(QMainWindow):
         self._receiver_stop = threading.Event()
         self._radio_models = list_radio_models()
         self._build_ui()
+        self._radio_tune_timer = QTimer(self)
+        self._radio_tune_timer.setSingleShot(True)
+        self._radio_tune_timer.setInterval(180)
+        self._radio_tune_timer.timeout.connect(self._apply_tuned_radio_frequency)
         self._display_timer = QTimer(self)
         self._display_timer.setInterval(200)
         self._display_timer.timeout.connect(self._update_live_display)
@@ -256,10 +249,13 @@ class AuroraQtWindow(QMainWindow):
         summary.setObjectName("panel")
         summary_layout = QVBoxLayout(summary)
         operating_row = QHBoxLayout()
-        self.radio_frequency = QSpinBox()
-        self.radio_frequency.setRange(100_000, 2_000_000_000)
-        self.radio_frequency.setValue(14_074_000)
-        self.radio_frequency.setSuffix(" Hz")
+        self.radio_frequency = DigitFrequencySpinBox()
+        self.radio_frequency.setToolTip(
+            "Click a digit, use the mouse wheel or Up/Down to tune; Left/Right selects a digit"
+        )
+        self.radio_frequency.operatorFrequencyChanged.connect(
+            self._schedule_radio_frequency
+        )
         self.radio_mode = QComboBox()
         self.radio_mode.addItems(("USB-D", "USB", "LSB-D", "LSB", "CW", "CW-R"))
         self.callsign_display = QLabel("N4EAC")
@@ -464,35 +460,27 @@ class AuroraQtWindow(QMainWindow):
         layout = QVBoxLayout(workspace)
         layout.setContentsMargins(0, 0, 0, 0)
         tuning = QHBoxLayout()
-        tuning.addWidget(QLabel("Audio TX/RX"))
-        self.frequency = QSpinBox()
-        self.frequency.setRange(100, 3_000)
-        self.frequency.setSingleStep(100)
-        self.frequency.setValue(1_500)
-        self.frequency.setSuffix(" Hz")
-        self.frequency.valueChanged.connect(self._frequency_changed)
-        tuning.addWidget(self.frequency)
+        tuning.addWidget(QLabel("Aurora modem center"))
+        center = QLabel(f"{MODEM_AUDIO_CENTER_HZ} Hz • fixed")
+        center.setObjectName("value")
+        tuning.addWidget(center)
         tuning.addStretch()
         layout.addLayout(tuning)
-        layout.addWidget(QLabel("SIGNAL SPECTRUM • click to tune"))
+        layout.addWidget(QLabel("RECEIVE SPECTRUM • monitoring 100–3000 Hz"))
         self.spectrum = SpectrumWidget()
-        self.spectrum.frequency_selected.connect(self.frequency.setValue)
         layout.addWidget(self.spectrum, 1)
         layout.addWidget(QLabel("WATERFALL"))
         self.waterfall = WaterfallWidget()
         layout.addWidget(self.waterfall)
         return workspace
 
-    def _frequency_changed(self, frequency_hz: int) -> None:
-        self.spectrum.set_frequency(frequency_hz)
-
     def _bandwidth_changed(self, selection: str) -> None:
-        """Keep the complete selected signal inside the radio audio passband."""
+        """Describe the occupied region for the fixed-center profile."""
         del selection
-        minimum, maximum = audio_center_limits(self._selected_mode())
-        self.frequency.setRange(minimum, maximum)
-        self.frequency.setToolTip(
-            f"Valid center range for this bandwidth: {minimum}–{maximum} Hz"
+        half_width = self._selected_mode().occupied_bandwidth_hz // 2
+        self.spectrum.setToolTip(
+            f"Selected profile occupies approximately "
+            f"{MODEM_AUDIO_CENTER_HZ - half_width}–{MODEM_AUDIO_CENTER_HZ + half_width} Hz"
         )
 
     def _station_identity_changed(self, callsign: str) -> None:
@@ -548,7 +536,6 @@ class AuroraQtWindow(QMainWindow):
         self.latitude.setText(str(p.value("station/latitude", "")))
         self.longitude.setText(str(p.value("station/longitude", "")))
         self.altitude.setText(str(p.value("station/altitude", "")))
-        self.frequency.setValue(int(p.value("signal/audio_frequency_hz", 1_500)))
         self.bandwidth.setCurrentText(str(p.value("signal/bandwidth", "AUTO")))
         self.radio_frequency.setValue(int(p.value("radio/frequency_hz", 14_074_000)))
         self.radio_mode.setCurrentText(str(p.value("radio/mode", "USB-D")))
@@ -581,7 +568,6 @@ class AuroraQtWindow(QMainWindow):
             "station/latitude": self.latitude.text().strip(),
             "station/longitude": self.longitude.text().strip(),
             "station/altitude": self.altitude.text().strip(),
-            "signal/audio_frequency_hz": self.frequency.value(),
             "signal/bandwidth": self.bandwidth.currentText(),
             "radio/frequency_hz": self.radio_frequency.value(),
             "radio/mode": self.radio_mode.currentText(),
@@ -630,24 +616,41 @@ class AuroraQtWindow(QMainWindow):
             self._tune_to_other_signal(row, prepare_contact=True)
 
     def _tune_to_other_signal(self, row: int, *, prepare_contact: bool) -> None:
-        """Tune to a decoded station and optionally prepare a directed reply."""
+        """Retune the radio to center a decoded station and prepare a reply."""
         frequency_item = self.other_signals.item(row, 0)
         callsign_item = self.other_signals.item(row, 1)
         if frequency_item is None or callsign_item is None:
             return
         frequency = int(frequency_item.data(Qt.UserRole))
         callsign = callsign_item.text().strip().upper()
-        self.frequency.setValue(frequency)
+        if self._hamlib is None:
+            self._append(f"[TUNE BLOCKED] Connect Hamlib to tune to {callsign}.")
+            return
+        try:
+            dial_frequency = dial_frequency_for_audio_center(
+                self.radio_frequency.value(), frequency, self.radio_mode.currentText()
+            )
+        except ValueError as error:
+            self._append(f"[TUNE BLOCKED] {error}")
+            return
+        self.radio_frequency.setValue(dial_frequency)
+        self._request_radio_frequency(
+            dial_frequency,
+            f"{callsign} from {frequency} Hz to {MODEM_AUDIO_CENTER_HZ} Hz",
+        )
         self.messages_dock.raise_()
         if prepare_contact:
             self.canned_message.setCurrentText("Custom")
             self.message.setText(f"{callsign} de <CALL>")
             self.message.setFocus()
             self._append(
-                f"[CONTACT] Tuned to {frequency} Hz; reply prepared for {callsign}."
+                f"[CONTACT] Centering {callsign} from {frequency} Hz; reply prepared."
             )
         else:
-            self._append(f"[TUNE] Following {callsign} at {frequency} Hz.")
+            self._append(
+                f"[TUNE] Centering {callsign} from {frequency} Hz at "
+                f"{dial_frequency} Hz dial."
+            )
 
     def _receive_audio(self, audio: AudioBuffer) -> None:
         """Fan one radio-audio block out to decoding and latest-frame display."""
@@ -781,7 +784,7 @@ class AuroraQtWindow(QMainWindow):
                 self._append(f"[SPECTRUM RX ERROR] {event}")
                 self._stop_receiver()
                 return
-            if event.message is not None and event.frequency_hz == self.frequency.value():
+            if event.message is not None and event.frequency_hz == MODEM_AUDIO_CENTER_HZ:
                 self._append(
                     f"[RX {event.frequency_hz} Hz/{event.message.callsign}] "
                     f"{event.message.text}"
@@ -898,6 +901,33 @@ class AuroraQtWindow(QMainWindow):
 
         threading.Thread(target=worker, name="AuroraHamlibSet", daemon=True).start()
 
+    def _schedule_radio_frequency(self, frequency_hz: int) -> None:
+        """Debounce operator wheel/key tuning before issuing a Hamlib command."""
+        del frequency_hz
+        self._radio_tune_timer.start()
+
+    def _apply_tuned_radio_frequency(self) -> None:
+        """Apply the operator-selected dial frequency through Hamlib."""
+        if self._hamlib is None:
+            self._append("[TUNE BLOCKED] Connect Hamlib to tune the radio.")
+            return
+        self._request_radio_frequency(self.radio_frequency.value(), "operator tuning")
+
+    def _request_radio_frequency(self, frequency_hz: int, reason: str) -> None:
+        """Set only the radio dial frequency without changing mode or passband."""
+        controller = self._hamlib
+        if controller is None:
+            return
+
+        def worker() -> None:
+            try:
+                controller.set_frequency(frequency_hz)
+                self._cat_events.put(("frequency_applied", frequency_hz, reason))
+            except Exception as error:
+                self._cat_events.put(("cat_error", error))
+
+        threading.Thread(target=worker, name="AuroraHamlibTune", daemon=True).start()
+
     def _ptt_arm_changed(self, armed: bool) -> None:
         self.transmit_button.setEnabled(armed and self._hamlib is not None)
         self.station_data_button.setEnabled(armed and self._hamlib is not None)
@@ -944,6 +974,8 @@ class AuroraQtWindow(QMainWindow):
                 self._show_cat_status(values[0])
             elif kind == "settings_applied":
                 self._append("[CAT] Radio frequency and mode applied.")
+            elif kind == "frequency_applied":
+                self._append(f"[CAT] Tuned to {values[0]} Hz ({values[1]}).")
             elif kind == "tx_complete":
                 self.transmit_button.setEnabled(self.ptt_arm.isChecked())
                 self.station_data_button.setEnabled(self.ptt_arm.isChecked())
@@ -955,7 +987,7 @@ class AuroraQtWindow(QMainWindow):
 
     def _build_transmit_audio(self, message_text: str | None = None) -> AudioBuffer:
         """Build conditioned radio audio for the current operator message."""
-        mode = mode_at_frequency(self._selected_mode(), self.frequency.value())
+        mode = mode_at_frequency(self._selected_mode(), MODEM_AUDIO_CENTER_HZ)
         transmission = encode_chat_air_transmission(
             self.callsign.text(), message_text or self._expanded_message(), mode=mode
         )
@@ -989,7 +1021,7 @@ class AuroraQtWindow(QMainWindow):
                 longitude=float(longitude_text) if longitude_text else None,
                 altitude_m=float(altitude_text) if altitude_text else None,
             )
-            mode = mode_at_frequency(self._selected_mode(), self.frequency.value())
+            mode = mode_at_frequency(self._selected_mode(), MODEM_AUDIO_CENTER_HZ)
             transmission = encode_station_air_transmission(
                 station,
                 frame_id=secrets.randbits(32),
@@ -1050,7 +1082,7 @@ class AuroraQtWindow(QMainWindow):
             return
         self._start_radio_playback(audio, output.index)
         self._append(
-            f"[TX {self.frequency.value()} Hz/{self.callsign.text()}] "
+            f"[TX {MODEM_AUDIO_CENTER_HZ} Hz/{self.callsign.text()}] "
             f"{expanded_message}"
         )
 

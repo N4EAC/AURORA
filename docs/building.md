@@ -23,6 +23,9 @@ log, native package metadata, and installer filename. Invalid semantic versions
 stop the build before packaging.
 PyInstaller caches are isolated beneath `build/` so packaging does not depend
 on or modify a user-level PyInstaller cache.
+Every platform script also validates the operator tuning contract before
+packaging: Hamlib controls RF frequency, Aurora's modem center is fixed at
+1,500 Hz, and the receive scan covers the 100–3,000 Hz audio passband.
 
 ## macOS
 

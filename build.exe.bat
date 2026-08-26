@@ -21,6 +21,8 @@ if not "%AURORA_SKIP_TESTS%"=="1" (
 
 "%BUILD_VENV%\Scripts\python.exe" packaging\prepare_build.py "%AURORA_VERSION%"
 if errorlevel 1 goto :error
+"%BUILD_VENV%\Scripts\python.exe" packaging\validate_operator_configuration.py
+if errorlevel 1 goto :error
 "%BUILD_VENV%\Scripts\python.exe" tools\bootstrap_hamlib.py
 if errorlevel 1 goto :error
 "%BUILD_VENV%\Scripts\python.exe" packaging\stage_hamlib.py

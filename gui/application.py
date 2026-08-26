@@ -56,6 +56,7 @@ from modem.station_data import (
     decode_station_transport,
     encode_station_transmission,
 )
+from radio.audio_tuning import MODEM_AUDIO_CENTER_HZ
 from modem.chat_transport import encode_chat_air_transmission
 from waterfall.model import WaterfallModel
 from util.session_debug_log import SessionDebugLog
@@ -275,43 +276,20 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     ttk.Label(
         spectrum_header, text="SIGNAL SPECTRUM", style="Aurora.Status.TLabel"
     ).pack(side=tk.LEFT)
-    tuning_frequency = tk.IntVar(value=1_500)
+    tuning_frequency = tk.IntVar(value=MODEM_AUDIO_CENTER_HZ)
     ttk.Label(
-        spectrum_header, text="TX/RX", style="Aurora.Status.TLabel"
-    ).pack(side=tk.LEFT, padx=(18, 4))
-    tuning_control = ttk.Spinbox(
         spectrum_header,
-        textvariable=tuning_frequency,
-        from_=100,
-        to=3_000,
-        increment=100,
-        width=7,
-    )
-    tuning_control.pack(side=tk.LEFT)
-    ttk.Label(
-        spectrum_header, text="Hz • click spectrum to tune", style="Aurora.Status.TLabel"
-    ).pack(side=tk.LEFT, padx=(4, 0))
-
-    def spectrum_frequency_selected(frequency_hz: int) -> None:
-        tuning_frequency.set(frequency_hz)
+        text=f"MODEM CENTER {MODEM_AUDIO_CENTER_HZ} Hz • FIXED",
+        style="Aurora.Status.TLabel",
+    ).pack(side=tk.LEFT, padx=(18, 4))
 
     spectrum = SpectrumView(
         workspace,
         floor_db=settings.spectrum_floor_db,
         ceiling_db=settings.spectrum_ceiling_db,
         selected_frequency_hz=tuning_frequency.get(),
-        selection_changed=spectrum_frequency_selected,
     )
     spectrum.grid(row=1, column=0, sticky="nsew")
-
-    def tuning_variable_changed(*unused: object) -> None:
-        del unused
-        try:
-            spectrum.set_selected_frequency(int(tuning_frequency.get()))
-        except tk.TclError:
-            return
-
-    tuning_frequency.trace_add("write", tuning_variable_changed)
 
     ttk.Label(
         workspace, text="SIGNAL HISTORY", style="Aurora.Status.TLabel"
@@ -611,22 +589,6 @@ def create_application(settings: AppSettings = SETTINGS) -> tk.Tk:
     def refresh_bandwidth_selection(event: object | None = None) -> None:
         del event
         selected_bandwidth_mode()
-
-    def apply_tuning_frequency(event: object | None = None) -> None:
-        del event
-        try:
-            frequency = int(tuning_frequency.get())
-            if not 100 <= frequency <= 3_000:
-                raise ValueError
-        except (tk.TclError, ValueError):
-            tuning_frequency.set(1_500)
-            frequency = 1_500
-        frequency = round(frequency / 100) * 100
-        tuning_frequency.set(frequency)
-        spectrum.set_selected_frequency(frequency)
-
-    tuning_control.bind("<Return>", apply_tuning_frequency)
-    tuning_control.bind("<FocusOut>", apply_tuning_frequency)
 
     def animate_signal() -> None:
         nonlocal animation_job

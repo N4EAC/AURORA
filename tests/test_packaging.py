@@ -12,11 +12,23 @@ from tools import bootstrap_hamlib
 
 VERIFY_PATH = Path(__file__).resolve().parent.parent / "packaging" / "verify_bundle.py"
 SPEC_PATH = Path(__file__).resolve().parent.parent / "packaging" / "aurora.spec"
+OPERATOR_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "packaging"
+    / "validate_operator_configuration.py"
+)
 VERIFY_SPEC = importlib.util.spec_from_file_location("aurora_verify_bundle", VERIFY_PATH)
 assert VERIFY_SPEC is not None and VERIFY_SPEC.loader is not None
 VERIFY_MODULE = importlib.util.module_from_spec(VERIFY_SPEC)
 VERIFY_SPEC.loader.exec_module(VERIFY_MODULE)
 verify_bundle = VERIFY_MODULE.verify_bundle
+
+OPERATOR_CONFIG_SPEC = importlib.util.spec_from_file_location(
+    "aurora_operator_build_config", OPERATOR_CONFIG_PATH
+)
+assert OPERATOR_CONFIG_SPEC is not None and OPERATOR_CONFIG_SPEC.loader is not None
+OPERATOR_CONFIG_MODULE = importlib.util.module_from_spec(OPERATOR_CONFIG_SPEC)
+OPERATOR_CONFIG_SPEC.loader.exec_module(OPERATOR_CONFIG_MODULE)
 
 
 class PackagingTests(unittest.TestCase):
@@ -54,6 +66,20 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('"gui.qt_application"', specification)
         self.assertIn('"tkinter"', specification)
         self.assertIn('"_tkinter"', specification)
+
+    def test_operator_tuning_configuration_is_release_compatible(self) -> None:
+        OPERATOR_CONFIG_MODULE.validate()
+        project_root = Path(__file__).resolve().parent.parent
+        for script in (
+            "build.macos.sh",
+            "build.ubuntu.sh",
+            "build.fedora.sh",
+            "build.exe.bat",
+        ):
+            self.assertIn(
+                "validate_operator_configuration.py",
+                (project_root / script).read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":
