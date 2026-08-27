@@ -116,6 +116,22 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "semantic"):
             BUILD_PREFLIGHT_MODULE.validate("macOS", "version-one")
 
+    def test_linux_preflight_does_not_import_os_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            os_release = Path(directory) / "os-release"
+            os_release.write_text(
+                'ID=ubuntu\nID_LIKE=debian\nVERSION="24.04.4 LTS (Noble Numbat)"\n',
+                encoding="utf-8",
+            )
+            BUILD_PREFLIGHT_MODULE.validate("Ubuntu", "0.1.0", os_release)
+
+    def test_linux_preflight_rejects_wrong_package_family(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            os_release = Path(directory) / "os-release"
+            os_release.write_text("ID=arch\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "Debian-compatible"):
+                BUILD_PREFLIGHT_MODULE.validate("Ubuntu", "0.1.0", os_release)
+
 
 if __name__ == "__main__":
     unittest.main()

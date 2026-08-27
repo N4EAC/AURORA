@@ -1086,11 +1086,14 @@ class AuroraQtWindow(QMainWindow):
         if self._stream is not None:
             return
         selected = self.input_device.currentText()
+        if self.preferences.contains("audio/input"):
+            selected = str(self.preferences.value("audio/input", "")).strip()
         if selected not in self._input_devices:
             self._append(
                 "[AUDIO RX] Saved radio input is unavailable; select an input in Setup."
             )
             return
+        self.input_device.setCurrentText(selected)
         self._append("[AUDIO RX] Starting the saved radio input automatically.")
         self._toggle_receiver()
 

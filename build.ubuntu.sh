@@ -12,13 +12,6 @@ trap 'status=$?; echo "ERROR: Aurora Ubuntu build failed during $BUILD_STAGE (ex
 cd "$PROJECT_ROOT"
 mkdir -p "$PROJECT_ROOT/build" "$PROJECT_ROOT/dist/installer"
 [[ "$(uname -s)" == "Linux" ]] || { echo "ERROR: Run this script on Ubuntu." >&2; exit 1; }
-if [[ -r /etc/os-release ]]; then
-    . /etc/os-release
-    [[ " ${ID:-} ${ID_LIKE:-} " == *" ubuntu "* || " ${ID:-} ${ID_LIKE:-} " == *" debian "* ]] || {
-        echo "ERROR: build.ubuntu.sh requires Ubuntu or a Debian-compatible host." >&2
-        exit 1
-    }
-fi
 command -v dpkg-deb >/dev/null || { echo "ERROR: dpkg-deb is required." >&2; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null || { echo "ERROR: Python 3 is required." >&2; exit 1; }
 

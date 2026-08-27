@@ -12,13 +12,6 @@ trap 'status=$?; echo "ERROR: Aurora Fedora build failed during $BUILD_STAGE (ex
 cd "$PROJECT_ROOT"
 mkdir -p "$PROJECT_ROOT/build" "$PROJECT_ROOT/dist/installer"
 [[ "$(uname -s)" == "Linux" ]] || { echo "ERROR: Run this script on Fedora." >&2; exit 1; }
-if [[ -r /etc/os-release ]]; then
-    . /etc/os-release
-    [[ " ${ID:-} ${ID_LIKE:-} " == *" fedora "* || " ${ID:-} ${ID_LIKE:-} " == *" rhel "* ]] || {
-        echo "ERROR: build.fedora.sh requires Fedora or an RPM-compatible host." >&2
-        exit 1
-    }
-fi
 command -v rpmbuild >/dev/null || { echo "ERROR: rpm-build is required." >&2; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null || { echo "ERROR: Python 3 is required." >&2; exit 1; }
 

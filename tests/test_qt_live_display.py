@@ -88,8 +88,12 @@ class QtLiveDisplayTests(unittest.TestCase):
         window.close()
 
     def test_missing_saved_audio_input_is_reported_without_starting(self) -> None:
+        self.preferences.setValue("audio/input", "Missing Radio Audio")
         window = AuroraQtWindow(preferences=self.preferences)
-        window.input_device.setCurrentText("Missing Radio Audio")
+        available = "4: Default Windows Audio Input"
+        window.input_device.addItem(available)
+        window.input_device.setCurrentText(available)
+        window._input_devices[available] = MagicMock()
         with patch.object(window, "_toggle_receiver") as toggle:
             window._restore_audio_automatically()
         toggle.assert_not_called()
