@@ -18,6 +18,10 @@ cross-compiling these installers is not supported.
 
 Release builds should not skip tests. Generated output is written beneath
 `dist/`; temporary output and isolated build environments are ignored by Git.
+Every builder creates `dist/installer` before dependency installation begins,
+so the output root is present even if a later stage fails. Failures identify
+the active stage (preflight, dependencies, tests, Hamlib, PyInstaller, or native
+installer) instead of reporting only a generic build failure.
 The selected version is embedded in the application, About dialog, session
 log, native package metadata, and installer filename. Invalid semantic versions
 stop the build before packaging.
@@ -78,6 +82,8 @@ The script creates `dist\Aurora\Aurora.exe` and then compiles
 `dist\installer\Aurora-<version>-windows-x86_64-setup.exe` using
 `packaging\windows\Aurora.iss`. If Inno Setup is installed in a custom
 location, set `ISCC_EXE` to the full path of `ISCC.exe` before building.
+The script uses absolute PyInstaller output paths and verifies both the EXE and
+the expected installer before reporting success.
 
 The Windows installer is per-user and therefore does not require administrator
 rights. It provides Start menu and optional desktop shortcuts.

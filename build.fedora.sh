@@ -6,31 +6,53 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_VENV="$PROJECT_ROOT/.venv-build-fedora"
 VERSION="${AURORA_VERSION:-0.1.0}"
 export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-config-fedora"
+BUILD_STAGE="startup"
+trap 'status=$?; echo "ERROR: Aurora Fedora build failed during $BUILD_STAGE (exit $status)." >&2' ERR
 
 cd "$PROJECT_ROOT"
+mkdir -p "$PROJECT_ROOT/build" "$PROJECT_ROOT/dist/installer"
 [[ "$(uname -s)" == "Linux" ]] || { echo "ERROR: Run this script on Fedora." >&2; exit 1; }
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    [[ " ${ID:-} ${ID_LIKE:-} " == *" fedora "* || " ${ID:-} ${ID_LIKE:-} " == *" rhel "* ]] || {
+        echo "ERROR: build.fedora.sh requires Fedora or an RPM-compatible host." >&2
+        exit 1
+    }
+fi
 command -v rpmbuild >/dev/null || { echo "ERROR: rpm-build is required." >&2; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null || { echo "ERROR: Python 3 is required." >&2; exit 1; }
 
+BUILD_STAGE="build preflight"
+"$PYTHON_BIN" packaging/build_preflight.py Fedora "$VERSION"
+BUILD_STAGE="virtual environment creation"
 "$PYTHON_BIN" -m venv "$BUILD_VENV"
+BUILD_STAGE="Python build dependencies"
 "$BUILD_VENV/bin/python" -m pip install --upgrade pip
 "$BUILD_VENV/bin/python" -m pip install -r requirements-build.txt
 if [[ "${AURORA_SKIP_TESTS:-0}" != "1" ]]; then
+    BUILD_STAGE="test suite"
     QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 \
         "$BUILD_VENV/bin/python" -m unittest discover -s tests -q
 fi
+BUILD_STAGE="build metadata and bundled Hamlib"
 "$BUILD_VENV/bin/python" packaging/prepare_build.py "$VERSION"
 "$BUILD_VENV/bin/python" packaging/validate_operator_configuration.py
 "$BUILD_VENV/bin/python" tools/bootstrap_hamlib.py
 "$BUILD_VENV/bin/python" packaging/stage_hamlib.py
 
+BUILD_STAGE="PyInstaller application"
 rm -rf "$PROJECT_ROOT/build/pyinstaller-fedora" "$PROJECT_ROOT/dist/Aurora"
-"$BUILD_VENV/bin/pyinstaller" --noconfirm --clean \
+"$BUILD_VENV/bin/python" -m PyInstaller --noconfirm --clean \
     --distpath "$PROJECT_ROOT/dist" \
     --workpath "$PROJECT_ROOT/build/pyinstaller-fedora" \
     "$PROJECT_ROOT/packaging/aurora.spec"
+[[ -x "$PROJECT_ROOT/dist/Aurora/Aurora" ]] || {
+    echo "ERROR: PyInstaller did not create dist/Aurora/Aurora." >&2
+    exit 1
+}
 "$BUILD_VENV/bin/python" packaging/verify_bundle.py "$PROJECT_ROOT/dist/Aurora"
 
+BUILD_STAGE="RPM installer"
 RPM_TOP="$PROJECT_ROOT/build/package-fedora"
 SOURCE_DIR="$RPM_TOP/source/aurora-hf-modem-$VERSION"
 rm -rf "$RPM_TOP"
@@ -48,4 +70,5 @@ find "$RPM_TOP/RPMS" -name '*.rpm' -exec cp {} "$PROJECT_ROOT/dist/installer/" \
 PACKAGE="$(find "$PROJECT_ROOT/dist/installer" -maxdepth 1 -name "aurora-hf-modem-${RPM_VERSION}-1*.rpm" -print -quit)"
 [[ -n "$PACKAGE" ]] || { echo "ERROR: rpmbuild did not produce an installer." >&2; exit 1; }
 rpm -qpi "$PACKAGE" >/dev/null
+BUILD_STAGE="complete"
 echo "Installer complete: $PACKAGE"
