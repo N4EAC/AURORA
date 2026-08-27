@@ -12,7 +12,8 @@ any current limit:
 | Absolute DC offset | 0.005 maximum |
 | Samples at or above 0.98 | zero |
 
-The OFDM generator peaks at 0.78 before the standard 0.55 playback gain. A
+The OFDM generator peaks at 0.78 before the maximum 0.55 playback gain, which
+the operator control presents conventionally as 100%. A
 representative conditioned frame measures approximately 0.429 peak, 0.107
 active RMS, and 4.0 crest factor. These software limits prevent normalized
 audio clipping but cannot detect distortion introduced after the computer

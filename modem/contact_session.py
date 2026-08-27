@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 import secrets
 import time
 
 
 MAX_REPLY_OFFSET_HZ = 10_000
-DEFAULT_REPLY_WINDOW_SECONDS = 120
+DEFAULT_REPLY_WINDOW_SECONDS = 300
 
 
 class TurnState(str, Enum):
@@ -41,11 +42,21 @@ class ContactSession:
     def expired(self, now: float | None = None) -> bool:
         return (time.monotonic() if now is None else now) >= self.expires_at
 
+    def remaining_seconds(self, now: float | None = None) -> int:
+        """Return displayed seconds remaining, rounded up and bounded at zero."""
+        remaining = self.expires_at - (time.monotonic() if now is None else now)
+        return max(0, math.ceil(remaining))
+
 
 def validate_reply_frequency(calling_hz: int, reply_hz: int) -> None:
     """Reject invalid or excessively separated Reply-To dial frequencies."""
     if calling_hz <= 0 or reply_hz <= 0:
         raise ValueError("Calling and Reply-To frequencies must be positive")
+    if reply_hz == calling_hz:
+        raise ValueError(
+            "Reply frequency must differ from the main frequency; "
+            "leave Reply Channel off for simplex operation"
+        )
     if abs(reply_hz - calling_hz) > MAX_REPLY_OFFSET_HZ:
         raise ValueError("Reply-To frequency must be within ±10 kHz")
 

@@ -3,7 +3,11 @@
 from datetime import datetime, timezone
 import unittest
 
-from modem.message_templates import expand_message_template, prepare_message_template
+from modem.message_templates import (
+    CANNED_MESSAGES,
+    expand_message_template,
+    prepare_message_template,
+)
 
 
 class MessageTemplateTests(unittest.TestCase):
@@ -38,6 +42,21 @@ class MessageTemplateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot"):
             prepare_message_template(
                 "Done <BTY> <EOC>", name="Eduardo", callsign="N4EAC"
+            )
+
+    def test_split_token_uses_configured_reply_frequency(self) -> None:
+        prepared = prepare_message_template(
+            CANNED_MESSAGES["CQ Reply"],
+            name="Eduardo",
+            callsign="N4EAC",
+            split_frequency_hz=7_114_000,
+        )
+        self.assertEqual(prepared.text, "CQ CQ de N4EAC listening on 7.114 MHz")
+
+    def test_split_token_requires_armed_or_accepted_reply_channel(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Reply Channel"):
+            prepare_message_template(
+                "Listening on <SPLT>", name="Eduardo", callsign="N4EAC"
             )
 
 

@@ -27,6 +27,7 @@ RestartApplications=no
 VersionInfoVersion={#MyAppVersion}
 VersionInfoProductName={#MyAppName}
 VersionInfoDescription=Aurora Windows installer
+SetupIconFile=..\..\assets\aurora.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

@@ -18,6 +18,8 @@ def verify_bundle(bundle: Path) -> None:
         raise RuntimeError("Bundled Hamlib rigctld is absent from the application bundle")
     if "source.txt" not in names:
         raise RuntimeError("Bundled Hamlib provenance is absent from the application bundle")
+    if not ({"aurora-icon.png", "aurora.icns"} & names):
+        raise RuntimeError("Aurora application icon is absent from the bundle")
 
 
 def main() -> None:

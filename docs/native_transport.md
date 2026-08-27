@@ -31,6 +31,7 @@ Templates are expanded immediately before native chat encoding:
 - `<CALL>` uses the saved station callsign; and
 - `<TNAME>` uses the selected other station's operator name;
 - `<TCALL>` uses the selected other station's callsign;
+- `<SPLT>` uses the armed or accepted Reply Channel frequency; and
 - `<TIME>` uses current UTC time formatted as `HH:MM UTC`.
 
 `<BTY>` and `<EOC>` are directives: Aurora removes them from displayed chat
@@ -38,10 +39,18 @@ text and sets native-transport control bits. They are mutually exclusive. All
 other tokens are expanded text, so receivers do not need to understand their
 syntax.
 
+The `CQ Reply` canned message is `CQ CQ de <CALL> listening on <SPLT>`. The
+expanded frequency is operator-readable text only; the protected Reply-To field
+remains authoritative. A receiving operator must explicitly select the decoded
+Reply action, after which Aurora creates the complementary route automatically:
+the responder transmits on the advertised Reply frequency and continues to
+receive on the caller's original frequency.
+
 ## Reply Channel operation
 
 Reply Channel is an optional, connectionless operating aid. An outgoing native
-message may advertise a dial frequency within 10 kHz of its calling frequency.
+message may advertise a different dial frequency within 10 kHz of its calling
+frequency. For same-frequency operation, leave Reply Channel off and use simplex.
 The receiving operator must explicitly accept the offer. Aurora then maintains
 complementary receive and transmit dial frequencies using verified fake-split
 tuning: PTT is off while tuning, the selected frequency is read back before PTT,
@@ -56,9 +65,16 @@ There is deliberately no connected-mode handshake or persistent link. The
 RETURN TO NORMAL control is always a local action and never waits for `BTY`,
 `EOC`, or another received signal. It clears Reply Channel state immediately and,
 when Hamlib is connected, restores the saved normal dial frequency and mode.
-The bounded reply window is refreshed by matching traffic; expiration performs
-the same local return. A lost or undecodable signal therefore cannot leave the
-operator trapped in split operation.
+The bounded reply window defaults to 300 seconds and displays a live MM:SS
+countdown. Matching contact traffic refreshes it; expiration performs the same
+local return. A lost or undecodable signal therefore cannot leave the operator
+trapped in split operation.
+
+If the operator changes the radio dial directly during an active fake-split
+arrangement, Hamlib reports only the radio's current VFO state; it does not
+rewrite both Aurora route frequencies. Aurora therefore cancels the stale split,
+adopts the newly reported dial frequency as simplex, and warns the operator that
+the Reply Channel contact was interrupted.
 
 ## Decoded-station actions
 

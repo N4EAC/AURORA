@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import QSpinBox
 
 
@@ -16,15 +17,56 @@ class DigitFrequencySpinBox(QSpinBox):
         self.setRange(100_000, 2_000_000_000)
         self.setValue(14_074_000)
         self.setAccelerated(False)
+        self.setKeyboardTracking(False)
         self._digit_place = 0
+        self._text_editing = False
+        self.lineEdit().textEdited.connect(self._operator_text_edited)
         self.lineEdit().editingFinished.connect(self._operator_edit_finished)
+
+    def operator_text_editing(self) -> bool:
+        """Return whether typed text is awaiting operator confirmation."""
+        return self._text_editing
+
+    def set_synchronized_value(self, frequency_hz: int) -> None:
+        """Set a linked frequency and immediately refresh its formatted text."""
+        self.setValue(frequency_hz)
+        self.lineEdit().setText(self.textFromValue(self.value()))
+        self.lineEdit().setModified(False)
+        self._text_editing = False
+        self.update()
+
+    def _operator_text_edited(self, text: str) -> None:
+        """Protect an incomplete operator entry from asynchronous CAT status."""
+        del text
+        self._text_editing = True
 
     def textFromValue(self, value: int) -> str:  # noqa: N802
         return f"{value:,} Hz"
 
     def valueFromText(self, text: str) -> int:  # noqa: N802
+        normalized = text.lower().replace(",", "").replace("khz", "")
+        normalized = normalized.replace("hz", "").strip()
+        try:
+            entered = float(normalized)
+        except ValueError:
+            return self.minimum()
+        frequency = entered * 1_000 if entered < self.minimum() else entered
+        return int(round(frequency))
+
+    def validate(self, text: str, position: int):  # noqa: ANN201
+        """Accept either full Hz values or abbreviated integer-kHz values."""
+        allowed = set("0123456789,. hzHZkK")
+        if any(character not in allowed for character in text) or text.count(".") > 1:
+            return QValidator.Invalid, text, position
         digits = "".join(character for character in text if character.isdigit())
-        return int(digits or self.minimum())
+        if not digits or text.rstrip().endswith("."):
+            return QValidator.Intermediate, text, position
+        frequency = self.valueFromText(text)
+        if self.minimum() <= frequency <= self.maximum():
+            return QValidator.Acceptable, text, position
+        if frequency < self.minimum():
+            return QValidator.Intermediate, text, position
+        return QValidator.Invalid, text, position
 
     def _digit_indexes(self) -> list[int]:
         return [index for index, character in enumerate(self.lineEdit().text()) if character.isdigit()]
@@ -36,17 +78,22 @@ class DigitFrequencySpinBox(QSpinBox):
         self._digit_place = max(0, min(place, len(indexes) - 1))
         self.lineEdit().setSelection(indexes[-1 - self._digit_place], 1)
 
-    def _select_cursor_digit(self) -> None:
+    def _select_cursor_digit(self, cursor: int | None = None) -> None:
         indexes = self._digit_indexes()
         if not indexes:
             return
-        cursor = self.lineEdit().cursorPosition()
-        selected = min(range(len(indexes)), key=lambda index: abs(indexes[index] - cursor))
+        position = self.lineEdit().cursorPosition() if cursor is None else cursor
+        selected = min(
+            range(len(indexes)), key=lambda index: abs(indexes[index] - position)
+        )
         self._select_digit(len(indexes) - 1 - selected)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        local = self.lineEdit().mapFrom(self, event.position().toPoint())
+        cursor = self.lineEdit().cursorPositionAt(local)
         super().mousePressEvent(event)
-        self._select_cursor_digit()
+        if self.lineEdit().rect().contains(local):
+            self._select_cursor_digit(cursor)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         direction = 1 if event.angleDelta().y() > 0 else -1
@@ -76,5 +123,7 @@ class DigitFrequencySpinBox(QSpinBox):
 
     def _operator_edit_finished(self) -> None:
         self.interpretText()
+        self._text_editing = False
+        self.lineEdit().setModified(False)
         self._select_cursor_digit()
         self.operatorFrequencyChanged.emit(self.value())

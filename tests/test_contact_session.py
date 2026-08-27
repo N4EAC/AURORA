@@ -63,6 +63,22 @@ class ContactSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "10 kHz"):
             validate_reply_frequency(7_117_000, 7_106_999)
 
+    def test_reply_frequency_must_differ_from_calling_frequency(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must differ"):
+            validate_reply_frequency(7_117_000, 7_117_000)
+
+    def test_reply_window_defaults_to_five_minutes_and_counts_down(self) -> None:
+        manager = ContactManager()
+        contact = manager.offer(
+            local_callsign="N4EAC",
+            normal_frequency_hz=7_117_000,
+            reply_frequency_hz=7_107_000,
+            mode="USB-D",
+        )
+        self.assertEqual(contact.remaining_seconds(now=contact.expires_at - 300), 300)
+        self.assertEqual(contact.remaining_seconds(now=contact.expires_at - 0.2), 1)
+        self.assertEqual(contact.remaining_seconds(now=contact.expires_at + 1), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

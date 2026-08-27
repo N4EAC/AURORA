@@ -6,10 +6,21 @@ import sys
 import queue
 import secrets
 import threading
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QImage,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -27,6 +38,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -46,7 +58,8 @@ from audio.multichannel_receiver import (
 from audio.playback import condition_playback, play_audio, stop_playback
 from audio.streaming import AudioInputStream, AudioStreamStatus
 from dsp.spectrum import SpectrumFrame, compute_spectrum
-from dsp.transmit_quality import validate_transmit_audio
+from dsp.transmit_quality import TransmitQualityReport, validate_transmit_audio
+from dsp.ofdm import config_for_mode
 from dsp.waveform import modulate_audio
 from modem.bandwidth_adaptation import fixed_bandwidth
 from modem.chat_transport import encode_chat_air_transmission
@@ -75,6 +88,8 @@ FOREGROUND = QColor("#eef5f7")
 MUTED = QColor("#8fa2b3")
 ACCENT = QColor("#47dbc6")
 BLUE = QColor("#68a7ff")
+MAX_TX_AUDIO_GAIN = 0.55
+TX_DRIVE_SCALE_VERSION = 2
 
 THEMES = {
     "Dark": ("#0b1016", "#0d141c", "#293846", "#eef5f7", "#8fa2b3", "#47dbc6", "#68a7ff"),
@@ -183,6 +198,70 @@ class WaterfallWidget(QWidget):
         painter.drawImage(self.rect(), self._image)
 
 
+class ConstellationWidget(QWidget):
+    """Read-only equalized-symbol constellation for decoded Aurora frames."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setMinimumHeight(150)
+        self._symbols: tuple[complex, ...] = ()
+
+    def set_symbols(self, symbols: tuple[complex, ...]) -> None:
+        self._symbols = symbols[-500:]
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), FIELD)
+        center_x, center_y = self.width() / 2.0, self.height() / 2.0
+        painter.setPen(QPen(BORDER, 1))
+        painter.drawLine(0, int(center_y), self.width(), int(center_y))
+        painter.drawLine(int(center_x), 0, int(center_x), self.height())
+        if not self._symbols:
+            painter.setPen(MUTED)
+            painter.drawText(self.rect(), Qt.AlignCenter, "Awaiting decoded OFDM symbols")
+            return
+        scale = max(min(self.width(), self.height()) * 0.34, 1.0)
+        painter.setPen(QPen(ACCENT, 3))
+        for symbol in self._symbols:
+            x = center_x + max(-1.4, min(1.4, symbol.real)) * scale / 1.4
+            y = center_y - max(-1.4, min(1.4, symbol.imag)) * scale / 1.4
+            painter.drawPoint(QPointF(x, y))
+
+
+class SubcarrierQualityWidget(QWidget):
+    """Read-only relative quality bars for the last decoded OFDM frame."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setMinimumHeight(120)
+        self._quality: tuple[float, ...] = ()
+
+    def set_quality(self, quality: tuple[float, ...]) -> None:
+        self._quality = quality
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), FIELD)
+        if not self._quality:
+            painter.setPen(MUTED)
+            painter.drawText(self.rect(), Qt.AlignCenter, "Awaiting decoded OFDM frame")
+            return
+        width = self.width() / len(self._quality)
+        for index, value in enumerate(self._quality):
+            height = max(1.0, min(1.0, value) * (self.height() - 8))
+            painter.fillRect(
+                int(index * width) + 1,
+                int(self.height() - height),
+                max(1, int(width) - 2),
+                int(height),
+                ACCENT,
+            )
+
+
 class AuroraQtWindow(QMainWindow):
     """Cross-platform Aurora operator window optimized for compact displays."""
 
@@ -208,10 +287,14 @@ class AuroraQtWindow(QMainWindow):
         self._stream: AudioInputStream | None = None
         self._hamlib: HamlibController | None = None
         self._hamlib_service: BundledHamlibService | None = None
+        self._last_cat_status: tuple[int, str, int, bool] | None = None
         self._contacts = ContactManager()
         self._target_callsign = ""
         self._target_name = ""
         self._cat_request_pending = False
+        self._operator_tune_pending = False
+        self._auto_cat_connect_pending = False
+        self._startup_radio_settings: tuple[int, str] | None = None
         self._receiver_stop = threading.Event()
         self._radio_models = list_radio_models()
         self._build_ui()
@@ -235,9 +318,18 @@ class AuroraQtWindow(QMainWindow):
         self._restore_preferences()
         self._append("[READY] Select radio audio input and connect Hamlib rigctld.")
         self._append(f"[LOG] Session debug: {self.session_log.path.name}")
+        if self._should_restore_cat_automatically():
+            self._startup_radio_settings = (
+                self.radio_frequency.value(),
+                self.radio_mode.currentText(),
+            )
+            QTimer.singleShot(250, self._restore_cat_automatically)
+        if self.preferences.contains("audio/input"):
+            QTimer.singleShot(400, self._restore_audio_automatically)
 
     def _build_ui(self) -> None:
         self._build_setup_dialog()
+        self._build_diagnostics_window()
         self._build_menus()
         root = QWidget()
         self.setCentralWidget(root)
@@ -260,10 +352,15 @@ class AuroraQtWindow(QMainWindow):
         operating_row = QHBoxLayout()
         self.radio_frequency = DigitFrequencySpinBox()
         self.radio_frequency.setToolTip(
-            "Click a digit, use the mouse wheel or Up/Down to tune; Left/Right selects a digit"
+            "Type a frequency and press Enter, or click a digit and use the mouse wheel or "
+            "Up/Down; Left/Right selects a digit. Short entries are kHz: 7117 becomes "
+            "7,117,000 Hz and 7117.5 becomes 7,117,500 Hz"
         )
         self.radio_frequency.operatorFrequencyChanged.connect(
-            self._schedule_radio_frequency
+            self._operator_radio_frequency_changed
+        )
+        self.radio_frequency.lineEdit().textEdited.connect(
+            self._preview_reply_frequency
         )
         self.radio_mode = QComboBox()
         self.radio_mode.addItems(("USB-D", "USB", "LSB-D", "LSB", "CW", "CW-R"))
@@ -282,21 +379,9 @@ class AuroraQtWindow(QMainWindow):
             operating_row.addWidget(widget)
         operating_row.addStretch()
         summary_layout.addLayout(operating_row)
-        diagnostic_row = QHBoxLayout()
-        self.diagnostics: dict[str, QLabel] = {}
-        for name, initial in (
-            ("Sync", "SEARCHING"), ("SNR", "-- dB"), ("Offset", "-- Hz"),
-            ("Timing", "--"), ("CRC", "WAITING"), ("FEC", "IDLE"),
-        ):
-            value = QLabel(f"{name}: {initial}")
-            value.setObjectName("value")
-            self.diagnostics[name] = value
-            diagnostic_row.addWidget(value)
-        diagnostic_row.addStretch()
-        summary_layout.addLayout(diagnostic_row)
         outer.addWidget(summary)
 
-        outer.addWidget(self._build_workspace(), 1)
+        outer.addWidget(self._build_workspace())
         self._bandwidth_changed(self.bandwidth.currentText())
 
         composer = QHBoxLayout()
@@ -398,11 +483,29 @@ class AuroraQtWindow(QMainWindow):
         self.output_device = QComboBox()
         audio_form.addRow("Radio input", self.input_device)
         audio_form.addRow("Radio output", self.output_device)
+        tx_level_row = QHBoxLayout()
+        self.tx_audio_level = QSlider(Qt.Horizontal)
+        self.tx_audio_level.setRange(10, 100)
+        self.tx_audio_level.setValue(100)
+        self.tx_audio_level.setToolTip(
+            "Generated Aurora audio amplitude; this does not change RF power."
+        )
+        self.tx_audio_level_value = QLabel("100%")
+        self.tx_audio_level.valueChanged.connect(
+            lambda value: self.tx_audio_level_value.setText(f"{value}%")
+        )
+        tx_level_row.addWidget(self.tx_audio_level, 1)
+        tx_level_row.addWidget(self.tx_audio_level_value)
+        audio_form.addRow("TX audio drive", tx_level_row)
         audio_layout.addLayout(audio_form)
+        self.tx_test_button = QPushButton("TUNE / TEST TX")
+        self.tx_test_button.setEnabled(False)
+        self.tx_test_button.clicked.connect(self._test_tx_audio)
+        audio_layout.addWidget(self.tx_test_button)
         refresh = QPushButton("REFRESH AUDIO DEVICES")
         refresh.clicked.connect(self._refresh_audio)
         audio_layout.addWidget(refresh)
-        self.rx_button = QPushButton("START SPECTRUM RX")
+        self.rx_button = QPushButton("START AUDIO RX")
         self.rx_button.clicked.connect(self._toggle_receiver)
         audio_layout.addWidget(self.rx_button)
         audio_layout.addStretch()
@@ -411,6 +514,45 @@ class AuroraQtWindow(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok)
         buttons.accepted.connect(self.setup_dialog.accept)
         dialog_layout.addWidget(buttons)
+
+    def _build_diagnostics_window(self) -> None:
+        """Create the optional, read-only signal diagnostics window."""
+        self.diagnostics_window = QDialog(self)
+        self.diagnostics_window.setWindowTitle("Aurora Signal Diagnostics")
+        self.diagnostics_window.resize(680, 560)
+        layout = QVBoxLayout(self.diagnostics_window)
+        form = QFormLayout()
+        self.diagnostics: dict[str, QLabel] = {}
+        for name, initial in (
+            ("Sync", "SEARCHING"), ("SNR", "-- dB"), ("Frequency offset", "-- Hz"),
+            ("Timing offset", "--"), ("CRC", "WAITING"),
+            ("FEC corrections", "not available"),
+        ):
+            value = QLabel(initial)
+            value.setObjectName("value")
+            self.diagnostics[name] = value
+            form.addRow(name, value)
+        layout.addLayout(form)
+        layout.addWidget(QLabel("GENERATED TX AUDIO"))
+        tx_form = QFormLayout()
+        self.tx_diagnostics: dict[str, QLabel] = {}
+        for name, initial in (
+            ("State", "IDLE"), ("Audio drive", "100%"), ("Peak", "--"),
+            ("RMS", "--"), ("Crest factor", "--"), ("Clipping", "--"),
+            ("Linearity", "NOT TESTED"), ("Profile", "--"),
+            ("Constellation", "ideal BPSK: −1 / +1"),
+        ):
+            value = QLabel(initial)
+            value.setObjectName("value")
+            self.tx_diagnostics[name] = value
+            tx_form.addRow(name, value)
+        layout.addLayout(tx_form)
+        layout.addWidget(QLabel("EQUALIZED BPSK CONSTELLATION"))
+        self.constellation = ConstellationWidget()
+        layout.addWidget(self.constellation, 1)
+        layout.addWidget(QLabel("PER-SUBCARRIER RELATIVE QUALITY"))
+        self.subcarrier_quality = SubcarrierQualityWidget()
+        layout.addWidget(self.subcarrier_quality, 1)
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -425,13 +567,22 @@ class AuroraQtWindow(QMainWindow):
         setup_action.triggered.connect(self.setup_dialog.show)
         setup_menu.addAction(setup_action)
 
-        view_menu = self.menuBar().addMenu("Theme")
+        view_menu = self.menuBar().addMenu("View")
+        self.diagnostics_action = QAction("Signal Diagnostics", self)
+        self.diagnostics_action.setCheckable(True)
+        self.diagnostics_action.toggled.connect(self.diagnostics_window.setVisible)
+        self.diagnostics_window.finished.connect(
+            lambda result: self.diagnostics_action.setChecked(False)
+        )
+        view_menu.addAction(self.diagnostics_action)
+
+        theme_menu = self.menuBar().addMenu("Theme")
         for theme_name in THEMES:
             action = QAction(theme_name, self)
             action.triggered.connect(
                 lambda checked=False, name=theme_name: self._apply_theme(name)
             )
-            view_menu.addAction(action)
+            theme_menu.addAction(action)
 
         help_menu = self.menuBar().addMenu("About")
         about_action = QAction("About Aurora", self)
@@ -472,25 +623,22 @@ class AuroraQtWindow(QMainWindow):
         workspace = QWidget()
         layout = QVBoxLayout(workspace)
         layout.setContentsMargins(0, 0, 0, 0)
-        tuning = QHBoxLayout()
-        tuning.addWidget(QLabel("Aurora modem center"))
-        center = QLabel(f"{MODEM_AUDIO_CENTER_HZ} Hz • fixed")
-        center.setObjectName("value")
-        tuning.addWidget(center)
-        tuning.addStretch()
-        layout.addLayout(tuning)
-        layout.addWidget(QLabel("RECEIVE SPECTRUM • monitoring 100–3000 Hz"))
-        self.spectrum = SpectrumWidget()
-        layout.addWidget(self.spectrum, 1)
-        layout.addWidget(QLabel("WATERFALL"))
+        layout.addWidget(QLabel("AUDIO ACTIVITY • 100–3000 Hz • DISPLAY ONLY"))
         self.waterfall = WaterfallWidget()
         layout.addWidget(self.waterfall)
         reply_row = QHBoxLayout()
-        self.reply_channel_enabled = QCheckBox("Offer Reply Channel")
+        self.reply_channel_enabled = QPushButton("REPLY CHANNEL: OFF")
+        self.reply_channel_enabled.setCheckable(True)
+        self.reply_channel_enabled.setToolTip(
+            "Arm this before SEND to advertise and listen on the Reply frequency"
+        )
+        self.reply_channel_enabled.toggled.connect(self._reply_offer_toggled)
         reply_row.addWidget(self.reply_channel_enabled)
         self.reply_frequency = DigitFrequencySpinBox()
         self.reply_frequency.setValue(14_074_000)
-        self.reply_frequency.setToolTip("Dial frequency where you will listen for replies")
+        self.reply_frequency.setToolTip(
+            "Dial frequency where you will listen for replies; short entries are kHz"
+        )
         reply_row.addWidget(self.reply_frequency)
         self.reply_window = QSpinBox()
         self.reply_window.setRange(30, 600)
@@ -511,10 +659,29 @@ class AuroraQtWindow(QMainWindow):
         """Describe the occupied region for the fixed-center profile."""
         del selection
         half_width = self._selected_mode().occupied_bandwidth_hz // 2
-        self.spectrum.setToolTip(
+        self.waterfall.setToolTip(
             f"Selected profile occupies approximately "
             f"{MODEM_AUDIO_CENTER_HZ - half_width}–{MODEM_AUDIO_CENTER_HZ + half_width} Hz"
         )
+
+    def _reply_offer_toggled(self, enabled: bool) -> None:
+        """Arm a Reply offer or cancel its active split when switched off."""
+        self.reply_channel_enabled.setText(
+            "REPLY CHANNEL: ARMED" if enabled else "REPLY CHANNEL: OFF"
+        )
+        if enabled and self.reply_frequency.value() == self.radio_frequency.value():
+            self.reply_channel_enabled.setChecked(False)
+            self.contact_status.setText("REPLY FREQUENCY MUST DIFFER")
+            self._append(
+                "[REPLY CHANNEL BLOCKED] Reply frequency cannot equal the main "
+                "frequency. Leave Reply Channel off for simplex operation."
+            )
+            return
+        if not enabled and self._contacts.active is not None:
+            self._return_to_normal_operation()
+            return
+        if self._contacts.active is None:
+            self.contact_status.setText("REPLY OFFER ARMED" if enabled else "SIMPLEX")
 
     def _station_identity_changed(self, callsign: str) -> None:
         self.callsign_display.setText(callsign.strip().upper() or "NOT SET")
@@ -526,16 +693,23 @@ class AuroraQtWindow(QMainWindow):
             self.message.setFocus()
 
     def _prepared_message(self):
+        active = self._contacts.active
+        split_frequency = None
+        if active is not None:
+            split_frequency = self.reply_frequency.value()
+        elif self.reply_channel_enabled.isChecked():
+            split_frequency = self.reply_frequency.value()
         return prepare_message_template(
             self.message.text(),
             name=self.operator_name.text(),
             callsign=self.callsign.text(),
             target_callsign=self._target_callsign,
             target_name=self._target_name,
+            split_frequency_hz=split_frequency,
         )
 
     def _set_diagnostic(self, name: str, value: str) -> None:
-        self.diagnostics[name].setText(f"{name}: {value}")
+        self.diagnostics[name].setText(value)
 
     def _apply_theme(self, name: str) -> None:
         """Apply and remember one of Aurora's operator display themes."""
@@ -545,8 +719,9 @@ class AuroraQtWindow(QMainWindow):
         BACKGROUND, FIELD, BORDER, FOREGROUND, MUTED, ACCENT, BLUE = map(QColor, colors)
         QApplication.instance().setStyleSheet(_stylesheet(selected))
         self.preferences.setValue("appearance/theme", selected)
-        self.spectrum.update()
         self.waterfall.update()
+        self.constellation.update()
+        self.subcarrier_quality.update()
 
     def _show_about(self) -> None:
         QMessageBox.information(
@@ -562,6 +737,23 @@ class AuroraQtWindow(QMainWindow):
             return default
         return str(value).lower() in {"1", "true", "yes"}
 
+    def _should_restore_cat_automatically(self) -> bool:
+        """Recognize successful CAT state and migrate complete legacy settings."""
+        success = self.preferences.value("cat/last_success")
+        if success is not None:
+            return self._stored_bool(success, False)
+
+        # Builds predating automatic CAT startup saved the working connection
+        # fields but had no success marker. Treat an explicitly saved, complete
+        # configuration as the migration signal; a successful connection will
+        # then persist cat/last_success for subsequent launches.
+        required = ("cat/model_id", "cat/baud", "cat/external")
+        if not all(self.preferences.contains(key) for key in required):
+            return False
+        if self._stored_bool(self.preferences.value("cat/external"), False):
+            return bool(str(self.preferences.value("cat/host", "")).strip())
+        return bool(str(self.preferences.value("cat/device", "")).strip())
+
     def _restore_preferences(self) -> None:
         """Restore operator, radio, audio, theme, geometry, and dock settings."""
         p = self.preferences
@@ -573,10 +765,17 @@ class AuroraQtWindow(QMainWindow):
         self.altitude.setText(str(p.value("station/altitude", "")))
         self.bandwidth.setCurrentText(str(p.value("signal/bandwidth", "AUTO")))
         self.radio_frequency.setValue(int(p.value("radio/frequency_hz", 14_074_000)))
-        self.reply_frequency.setValue(
-            int(p.value("contact/reply_frequency_hz", self.radio_frequency.value()))
+        # A Reply-To candidate is transient contact state. Never resurrect it
+        # without an active contact after an application restart.
+        self.reply_frequency.set_synchronized_value(self.radio_frequency.value())
+        p.remove("contact/reply_frequency_hz")
+        saved_reply_window = int(
+            p.value("contact/reply_window_seconds", DEFAULT_REPLY_WINDOW_SECONDS)
         )
-        self.reply_window.setValue(int(p.value("contact/reply_window_seconds", 120)))
+        # Migrate the former default while preserving other operator choices.
+        if saved_reply_window == 120:
+            saved_reply_window = DEFAULT_REPLY_WINDOW_SECONDS
+        self.reply_window.setValue(saved_reply_window)
         self.radio_mode.setCurrentText(str(p.value("radio/mode", "USB-D")))
         model_index = self.hamlib_model.findData(int(p.value("cat/model_id", 3073)))
         if model_index >= 0:
@@ -589,6 +788,12 @@ class AuroraQtWindow(QMainWindow):
         self.ptt_arm.setChecked(self._stored_bool(p.value("cat/ptt_control"), True))
         self.input_device.setCurrentText(str(p.value("audio/input", self.input_device.currentText())))
         self.output_device.setCurrentText(str(p.value("audio/output", self.output_device.currentText())))
+        saved_tx_drive = int(p.value("audio/tx_drive_percent", 100))
+        scale_version = int(p.value("audio/tx_drive_scale_version", 1))
+        if scale_version < TX_DRIVE_SCALE_VERSION:
+            # Preserve the actual gain from the former 10–55 raw-gain display.
+            saved_tx_drive = round(saved_tx_drive / 55 * 100)
+        self.tx_audio_level.setValue(saved_tx_drive)
         self._apply_theme(str(p.value("appearance/theme", "Dark")))
         geometry = p.value("window/geometry")
         dock_state = p.value("window/dock_state")
@@ -609,7 +814,6 @@ class AuroraQtWindow(QMainWindow):
             "station/altitude": self.altitude.text().strip(),
             "signal/bandwidth": self.bandwidth.currentText(),
             "radio/frequency_hz": self.radio_frequency.value(),
-            "contact/reply_frequency_hz": self.reply_frequency.value(),
             "contact/reply_window_seconds": self.reply_window.value(),
             "radio/mode": self.radio_mode.currentText(),
             "cat/model_id": self.hamlib_model.currentData(),
@@ -621,6 +825,8 @@ class AuroraQtWindow(QMainWindow):
             "cat/ptt_control": self.ptt_arm.isChecked(),
             "audio/input": self.input_device.currentText(),
             "audio/output": self.output_device.currentText(),
+            "audio/tx_drive_percent": self.tx_audio_level.value(),
+            "audio/tx_drive_scale_version": TX_DRIVE_SCALE_VERSION,
             "window/geometry": self.saveGeometry(),
             "window/dock_state": self.saveState(),
         }
@@ -628,8 +834,17 @@ class AuroraQtWindow(QMainWindow):
             p.setValue(key, value)
         p.sync()
 
-    def _append(self, text: str) -> None:
-        self.history.append(text)
+    def _append(self, text: str, *, chat: bool = False) -> None:
+        """Append chat in normal text and system events in theme-safe color."""
+        cursor = self.history.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        if not self.history.document().isEmpty():
+            cursor.insertBlock()
+        text_format = QTextCharFormat()
+        text_format.setForeground(FOREGROUND if chat else BLUE)
+        cursor.insertText(text, text_format)
+        self.history.setTextCursor(cursor)
+        self.history.ensureCursorVisible()
 
     def add_other_signal(
         self,
@@ -704,12 +919,15 @@ class AuroraQtWindow(QMainWindow):
             return
         self._target_callsign = session.peer_callsign
         self._target_name = session.peer_name
+        self.reply_frequency.set_synchronized_value(session.transmit_frequency_hz)
         self.radio_frequency.setValue(session.receive_frequency_hz)
+        self._operator_tune_pending = True
         self._request_radio_frequency(session.receive_frequency_hz, "Reply Channel RX")
         self.return_normal_button.setEnabled(True)
         self.contact_status.setText(
             f"SPLIT RX {session.receive_frequency_hz} / TX {session.transmit_frequency_hz}"
         )
+        self._refresh_radio_route_badge()
         self._append(
             f"[REPLY CHANNEL] {session.peer_callsign}: RX {session.receive_frequency_hz} Hz, "
             f"TX {session.transmit_frequency_hz} Hz."
@@ -782,10 +1000,7 @@ class AuroraQtWindow(QMainWindow):
             fft_size=self.settings.spectrum_fft_size,
             floor_db=self.settings.spectrum_floor_db,
         )
-        self.spectrum.set_frame(frame)
         self.waterfall.add_frame(frame)
-        peak = float(np.max(np.abs(display_samples)))
-        self._set_diagnostic("SNR", f"Input {peak:.3f}")
 
     def _selected_mode(self):
         selection = self.bandwidth.currentText()
@@ -840,7 +1055,7 @@ class AuroraQtWindow(QMainWindow):
         except Exception as error:
             self._receiver = None
             self._stream = None
-            self._append(f"[SPECTRUM RX ERROR] {error}")
+            self._append(f"[AUDIO RX ERROR] {error}")
             return
 
         def worker() -> None:
@@ -863,8 +1078,21 @@ class AuroraQtWindow(QMainWindow):
                     return
 
         threading.Thread(target=worker, name="AuroraQtSpectrumReceiver", daemon=True).start()
-        self.rx_button.setText("STOP SPECTRUM RX")
+        self.rx_button.setText("STOP AUDIO RX")
         self._append(f"[RX] Live radio audio: {device.name}; scanning 100–3000 Hz.")
+
+    def _restore_audio_automatically(self) -> None:
+        """Start receive monitoring from the saved radio input at launch."""
+        if self._stream is not None:
+            return
+        selected = self.input_device.currentText()
+        if selected not in self._input_devices:
+            self._append(
+                "[AUDIO RX] Saved radio input is unavailable; select an input in Setup."
+            )
+            return
+        self._append("[AUDIO RX] Starting the saved radio input automatically.")
+        self._toggle_receiver()
 
     def _stop_receiver(self) -> None:
         self._receiver_stop.set()
@@ -874,7 +1102,7 @@ class AuroraQtWindow(QMainWindow):
         self._stream = None
         self._receiver = None
         stop_playback()
-        self.rx_button.setText("START SPECTRUM RX")
+        self.rx_button.setText("START AUDIO RX")
 
     def _poll_decode_events(self) -> None:
         while True:
@@ -883,7 +1111,7 @@ class AuroraQtWindow(QMainWindow):
             except queue.Empty:
                 break
             if isinstance(event, Exception):
-                self._append(f"[SPECTRUM RX ERROR] {event}")
+                self._append(f"[AUDIO RX ERROR] {event}")
                 self._stop_receiver()
                 return
             if event.message is not None:
@@ -891,7 +1119,8 @@ class AuroraQtWindow(QMainWindow):
             if event.message is not None and event.frequency_hz == MODEM_AUDIO_CENTER_HZ:
                 self._append(
                     f"[RX {event.frequency_hz} Hz/{event.message.callsign}] "
-                    f"{event.message.text}"
+                    f"{event.message.text}",
+                    chat=True,
                 )
                 if event.message.reply_frequency_hz is not None:
                     self.add_other_signal(
@@ -932,10 +1161,17 @@ class AuroraQtWindow(QMainWindow):
                     f"Report #{report.referenced_frame_id}: {report.snr_db:+.1f} dB SNR",
                 )
             self._set_diagnostic("Sync", "LOCKED")
-            self._set_diagnostic("Offset", f"{event.frequency_offset_hz:+.2f} Hz")
-            self._set_diagnostic("Timing", f"{event.timing_offset_samples:.2f} samples")
+            self._set_diagnostic("SNR", f"{event.snr_db:+.1f} dB")
+            self._set_diagnostic(
+                "Frequency offset", f"{event.frequency_offset_hz:+.2f} Hz"
+            )
+            self._set_diagnostic(
+                "Timing offset", f"{event.timing_offset_samples:.2f} samples"
+            )
             self._set_diagnostic("CRC", "PASS")
-            self._set_diagnostic("FEC", "CORRECTED")
+            self._set_diagnostic("FEC corrections", "decoded; count unavailable")
+            self.constellation.set_symbols(event.equalized_symbols)
+            self.subcarrier_quality.set_quality(event.subcarrier_quality)
         self._poll_cat_events()
 
     def _handle_contact_control(self, message) -> None:
@@ -997,6 +1233,14 @@ class AuroraQtWindow(QMainWindow):
 
         threading.Thread(target=worker, name="AuroraHamlibConnect", daemon=True).start()
 
+    def _restore_cat_automatically(self) -> None:
+        """Reconnect a previously successful CAT setup without opening Setup."""
+        if self._hamlib is not None:
+            return
+        self._auto_cat_connect_pending = True
+        self._append("[CAT] Restoring the last successful CAT configuration.")
+        self._toggle_cat()
+
     def _disconnect_cat(self) -> None:
         controller = self._hamlib
         service = self._hamlib_service
@@ -1017,7 +1261,9 @@ class AuroraQtWindow(QMainWindow):
         self.cat_button.setEnabled(True)
         self.apply_radio_button.setEnabled(False)
         self.station_data_button.setEnabled(False)
+        self.tx_test_button.setEnabled(False)
         self.radio_badge.setText("RADIO DISCONNECTED")
+        self._last_cat_status = None
         self.return_normal_button.setEnabled(False)
         self.contact_status.setText("SIMPLEX")
 
@@ -1027,6 +1273,8 @@ class AuroraQtWindow(QMainWindow):
             self._append("[REPLY CHANNEL] Offer expired; returning to normal operation.")
             self._return_to_normal_operation()
             return
+        if active is not None:
+            self._update_contact_countdown()
         if self._hamlib is None or self._cat_request_pending:
             return
         self._cat_request_pending = True
@@ -1044,6 +1292,24 @@ class AuroraQtWindow(QMainWindow):
                 self._cat_events.put(("cat_error", error))
 
         threading.Thread(target=worker, name="AuroraHamlibPoll", daemon=True).start()
+
+    def _update_contact_countdown(self) -> None:
+        """Show the remaining Reply Channel time without changing its routing."""
+        active = self._contacts.active
+        if active is None:
+            return
+        remaining = active.remaining_seconds()
+        countdown = f"{remaining // 60:02d}:{remaining % 60:02d}"
+        if active.turn_state == TurnState.WAITING_FOR_REPLY:
+            status = "WAITING FOR REPLY"
+        elif active.turn_state == TurnState.PEER_PASSED_TURN:
+            status = f"YOUR TURN • {active.peer_callsign}"
+        else:
+            status = (
+                f"SPLIT RX {active.receive_frequency_hz} / "
+                f"TX {active.transmit_frequency_hz}"
+            )
+        self.contact_status.setText(f"{status} • {countdown}")
 
     def _apply_radio_settings(self) -> None:
         if self._hamlib is None:
@@ -1066,7 +1332,19 @@ class AuroraQtWindow(QMainWindow):
     def _schedule_radio_frequency(self, frequency_hz: int) -> None:
         """Debounce operator wheel/key tuning before issuing a Hamlib command."""
         del frequency_hz
+        self._operator_tune_pending = True
         self._radio_tune_timer.start()
+
+    def _operator_radio_frequency_changed(self, frequency_hz: int) -> None:
+        """Tune the radio and initialize Reply Channel from the operator entry."""
+        self.reply_frequency.set_synchronized_value(frequency_hz)
+        self._schedule_radio_frequency(frequency_hz)
+
+    def _preview_reply_frequency(self, text: str) -> None:
+        """Mirror a valid typed frequency before Enter commands the radio."""
+        frequency_hz = self.radio_frequency.valueFromText(text)
+        if self.radio_frequency.minimum() <= frequency_hz <= self.radio_frequency.maximum():
+            self.reply_frequency.set_synchronized_value(frequency_hz)
 
     def _apply_tuned_radio_frequency(self) -> None:
         """Apply the operator-selected dial frequency through Hamlib."""
@@ -1122,15 +1400,29 @@ class AuroraQtWindow(QMainWindow):
     def _ptt_arm_changed(self, armed: bool) -> None:
         self.transmit_button.setEnabled(armed and self._hamlib is not None)
         self.station_data_button.setEnabled(armed and self._hamlib is not None)
+        self.tx_test_button.setEnabled(armed and self._hamlib is not None)
 
     def _show_cat_status(self, status: tuple[int, str, int, bool]) -> None:
         frequency, mode, passband, ptt = status
-        self.radio_frequency.setValue(frequency)
+        active = self._contacts.active
+        if (
+            active is not None
+            and not ptt
+            and not self._operator_tune_pending
+            and frequency != active.receive_frequency_hz
+        ):
+            self._clear_split_after_manual_radio_tune(frequency)
+        self._last_cat_status = status
+        if not (
+            self.radio_frequency.operator_text_editing()
+            or self._operator_tune_pending
+        ):
+            self.radio_frequency.setValue(frequency)
         if self.radio_mode.findText(mode) < 0:
             self.radio_mode.addItem(mode)
         self.radio_mode.setCurrentText(mode)
         state = "TX" if ptt else "RX"
-        self.radio_badge.setText(f"HAMLIB {state} • {frequency / 1_000_000:.6f} MHz")
+        self._refresh_radio_route_badge()
         self._set_diagnostic("Sync", f"CAT {state}")
         self.session_log.record(
             "HAMLIB_STATUS",
@@ -1138,6 +1430,45 @@ class AuroraQtWindow(QMainWindow):
             mode=mode,
             passband_hz=passband,
             ptt=ptt,
+        )
+
+    def _clear_split_after_manual_radio_tune(self, frequency_hz: int) -> None:
+        """Adopt an external dial change as simplex instead of hiding stale split."""
+        previous = self._contacts.return_to_normal()
+        if previous is None:
+            return
+        self._target_callsign = ""
+        self._target_name = ""
+        self.reply_channel_enabled.setChecked(False)
+        self.return_normal_button.setEnabled(False)
+        self.radio_frequency.set_synchronized_value(frequency_hz)
+        self.reply_frequency.set_synchronized_value(frequency_hz)
+        self.contact_status.setText("SIMPLEX • MANUAL RADIO TUNE")
+        self._append(
+            "[REPLY CHANNEL CANCELLED] The radio was tuned manually during split. "
+            f"Aurora adopted {frequency_hz} Hz as the new simplex frequency."
+        )
+
+    def _refresh_radio_route_badge(self) -> None:
+        """Show explicit RX/TX dial routing for simplex or Reply Channel."""
+        if self._hamlib is None:
+            self.radio_badge.setText("RADIO DISCONNECTED")
+            return
+        status = self._last_cat_status
+        actual_hz = status[0] if status is not None else self.radio_frequency.value()
+        ptt = status[3] if status is not None else False
+        session = self._contacts.active
+        if session is None:
+            receive_hz = transmit_hz = actual_hz
+            route = "SIMPLEX"
+        else:
+            receive_hz = session.receive_frequency_hz
+            transmit_hz = session.transmit_frequency_hz
+            route = "SPLIT" if session.split else "SIMPLEX"
+        state = "TX" if ptt else "RX"
+        self.radio_badge.setText(
+            f"HAMLIB {state} • {route}\n"
+            f"RX: {receive_hz / 1_000_000:.6f}  TX: {transmit_hz / 1_000_000:.6f} MHz"
         )
 
     def _poll_cat_events(self) -> None:
@@ -1151,30 +1482,61 @@ class AuroraQtWindow(QMainWindow):
             if kind == "connected":
                 self._hamlib = values[0]
                 self._hamlib_service = values[1]
+                self.preferences.setValue("cat/last_success", True)
+                self._save_preferences()
                 self.cat_button.setText("DISCONNECT HAMLIB")
                 self.cat_button.setEnabled(True)
                 self.apply_radio_button.setEnabled(True)
-                self.station_data_button.setEnabled(self.ptt_arm.isChecked())
+                self._ptt_arm_changed(self.ptt_arm.isChecked())
                 self._show_cat_status(values[2])
                 source = "external" if self._hamlib_service is None else "bundled"
                 self._append(
                     f"[CAT] {source.title()} Hamlib connected; PTT control "
                     f"{'enabled' if self.ptt_arm.isChecked() else 'disabled'}."
                 )
+                if (
+                    self._auto_cat_connect_pending
+                    and self._startup_radio_settings is not None
+                ):
+                    frequency, mode = self._startup_radio_settings
+                    self.radio_frequency.set_synchronized_value(frequency)
+                    self.reply_frequency.set_synchronized_value(frequency)
+                    self.radio_mode.setCurrentText(mode)
+                    self._append(
+                        f"[CAT] Applying saved frequency {frequency} Hz and mode {mode}."
+                    )
+                    self._apply_radio_settings()
+                self._auto_cat_connect_pending = False
+                self._startup_radio_settings = None
             elif kind == "status":
                 self._show_cat_status(values[0])
             elif kind == "settings_applied":
                 self._append("[CAT] Radio frequency and mode applied.")
             elif kind == "frequency_applied":
+                self._operator_tune_pending = False
+                self.radio_frequency.setValue(values[0])
+                if self._last_cat_status is not None:
+                    _, mode, passband, ptt = self._last_cat_status
+                    self._last_cat_status = (values[0], mode, passband, ptt)
+                self._refresh_radio_route_badge()
                 self._append(f"[CAT] Tuned to {values[0]} Hz ({values[1]}).")
             elif kind == "normal_restored":
                 self.radio_frequency.setValue(values[0])
                 self.contact_status.setText("SIMPLEX")
+                if self._last_cat_status is not None:
+                    _, mode, passband, ptt = self._last_cat_status
+                    self._last_cat_status = (values[0], mode, passband, ptt)
+                self._refresh_radio_route_badge()
                 self._append(f"[CONTACT] Returned to normal operation on {values[0]} Hz.")
             elif kind == "tx_complete":
+                self._operator_tune_pending = False
                 self.transmit_button.setEnabled(self.ptt_arm.isChecked())
                 self.station_data_button.setEnabled(self.ptt_arm.isChecked())
+                self.tx_test_button.setEnabled(self.ptt_arm.isChecked())
                 error, back_to_you, end_of_call, return_frequency = values
+                self.tx_diagnostics["State"].setText(
+                    "ERROR" if error is not None else "IDLE"
+                )
                 if return_frequency is not None:
                     self.radio_frequency.setValue(return_frequency)
                 if back_to_you and error is None:
@@ -1189,9 +1551,13 @@ class AuroraQtWindow(QMainWindow):
                     self.contact_status.setText("SIMPLEX")
                     if ended is not None:
                         self._append("[EOC] Contact ended; returned to normal operation.")
+                self._refresh_radio_route_badge()
                 if error is not None:
                     self._append(f"[TX ERROR] {error}")
             elif kind == "cat_error":
+                self._operator_tune_pending = False
+                self._auto_cat_connect_pending = False
+                self._startup_radio_settings = None
                 self.cat_button.setEnabled(True)
                 self._append(f"[CAT ERROR] {values[0]}")
 
@@ -1228,12 +1594,55 @@ class AuroraQtWindow(QMainWindow):
         )
         conditioned = condition_playback(
             waveform,
-            gain=0.55,
+            gain=self._tx_audio_gain(),
             fade_seconds=0.02,
             trailing_silence_seconds=0.10,
         )
-        validate_transmit_audio(conditioned)
+        report = validate_transmit_audio(conditioned)
+        self._update_generated_tx_diagnostics(mode, report)
         return conditioned
+
+    def _update_generated_tx_diagnostics(
+        self, mode, report: TransmitQualityReport
+    ) -> None:
+        """Publish local waveform measurements without implying an RF ALC reading."""
+        carrier_count = len(config_for_mode(mode).data_subcarriers)
+        values = {
+            "Audio drive": f"{self.tx_audio_level.value()}%",
+            "Peak": f"{report.peak:.3f}",
+            "RMS": f"{report.active_rms:.3f}",
+            "Crest factor": f"{report.crest_factor:.2f}:1",
+            "Clipping": str(report.clipped_samples),
+            "Linearity": "PASS" if report.compliant else "BLOCKED",
+            "Profile": f"{mode.occupied_bandwidth_hz} Hz • {carrier_count} carriers",
+        }
+        for name, value in values.items():
+            self.tx_diagnostics[name].setText(value)
+
+    def _tx_audio_gain(self) -> float:
+        """Map the operator's 100% display to Aurora's validated gain ceiling."""
+        return MAX_TX_AUDIO_GAIN * self.tx_audio_level.value() / 100.0
+
+    def _test_tx_audio(self) -> None:
+        """Transmit a representative identified OFDM frame for radio ALC setup."""
+        if self._hamlib is None or not self.ptt_arm.isChecked():
+            self._append("[TX TEST BLOCKED] Connect Hamlib and enable PTT Control.")
+            return
+        if self._contacts.active is not None:
+            self._append("[TX TEST BLOCKED] Return to normal operation before testing.")
+            return
+        try:
+            output = self._output_devices[self.output_device.currentText()]
+            callsign = self.callsign.text().strip().upper() or "AURORA"
+            audio = self._build_transmit_audio(f"TX LEVEL TEST DE {callsign}")
+        except Exception as error:
+            self._append(f"[TX TEST ERROR] {error}")
+            return
+        self._start_radio_playback(audio, output.index)
+        self._append(
+            f"[TX TEST] Aurora OFDM level test at {self.tx_audio_level.value()}%; "
+            "observe the radio ALC meter."
+        )
 
     def _send_station_data(self) -> None:
         """Send optional location as a separate AX.25 station-data frame."""
@@ -1265,11 +1674,12 @@ class AuroraQtWindow(QMainWindow):
             )
             audio = condition_playback(
                 waveform,
-                gain=0.55,
+                gain=self._tx_audio_gain(),
                 fade_seconds=0.02,
                 trailing_silence_seconds=0.10,
             )
-            validate_transmit_audio(audio)
+            report = validate_transmit_audio(audio)
+            self._update_generated_tx_diagnostics(mode, report)
             output = self._output_devices[self.output_device.currentText()]
         except Exception as error:
             self._append(f"[STATION DATA ERROR] {error}")
@@ -1291,7 +1701,11 @@ class AuroraQtWindow(QMainWindow):
         """Key PTT and play one already-conditioned Aurora transmission."""
         self.transmit_button.setEnabled(False)
         self.station_data_button.setEnabled(False)
+        self.tx_test_button.setEnabled(False)
+        self.tx_diagnostics["State"].setText("TX ACTIVE")
         session = self._contacts.active
+        if session is not None and session.split:
+            self._operator_tune_pending = True
 
         def worker() -> None:
             error = None
@@ -1347,6 +1761,7 @@ class AuroraQtWindow(QMainWindow):
                 self.contact_status.setText(
                     f"SPLIT RX {session.receive_frequency_hz} / TX {session.transmit_frequency_hz}"
                 )
+                self._refresh_radio_route_badge()
             if (back_to_you or end_of_call) and self._contacts.active is None:
                 raise ValueError("BTY and EOC require an active Reply Channel contact")
             if self._contacts.active is not None:
@@ -1368,7 +1783,8 @@ class AuroraQtWindow(QMainWindow):
         )
         self._append(
             f"[TX {MODEM_AUDIO_CENTER_HZ} Hz/{self.callsign.text()}] "
-            f"{prepared.text}"
+            f"{prepared.text}",
+            chat=True,
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802
@@ -1395,6 +1811,7 @@ def _stylesheet(theme_name: str = "Dark") -> str:
         QLineEdit, QSpinBox, QComboBox, QTextEdit, QTableWidget {{ background: {field}; border: 1px solid {border}; padding: 5px; }}
         QPushButton {{ background: {field}; border: 1px solid {border}; padding: 7px; border-radius: 4px; }}
         QPushButton:hover {{ border-color: {accent}; }}
+        QPushButton:checked {{ background: {accent}; color: {background}; border-color: {accent}; font-weight: 700; }}
         QPushButton#primary {{ background: {border}; border-color: {accent}; font-weight: 700; }}
         QTabBar::tab {{ background: {field}; padding: 7px 12px; }}
         QTabBar::tab:selected {{ color: {accent}; border-bottom: 2px solid {accent}; }}
@@ -1406,6 +1823,10 @@ def run(settings: AppSettings = SETTINGS) -> None:
     application = QApplication.instance() or QApplication(sys.argv)
     application.setApplicationName("Aurora")
     application.setOrganizationName("N4EAC")
+    resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    icon_path = resource_root / "assets" / "aurora-icon.png"
+    if icon_path.is_file():
+        application.setWindowIcon(QIcon(str(icon_path)))
     application.setStyle("Fusion")
     application.setStyleSheet(_stylesheet())
     window = AuroraQtWindow(settings)

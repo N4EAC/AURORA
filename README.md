@@ -11,19 +11,30 @@ Platform installer instructions are documented in [docs/building.md](docs/buildi
 Aurora is a new digital-modem research project exploring reliable,
 weak-signal communication under real-world HF propagation conditions.
 
-## UPDATES — August 24, 2026
+## UPDATES — August 26, 2026
 
 - Promoted the responsive PySide6 operator interface on macOS, Linux, and
   Windows. The Tkinter interface remains an explicit compatibility fallback.
 - Added persistent Station ID, CAT Control, and Audio setup, including named
   Hamlib radios, dockable panels, Dark/Amber/Green themes, and Enter-to-send.
-- Added live 100–3000 Hz radio-audio spectrum and compact waterfall displays,
-  fixed-center modem operation, digit-selectable Hamlib tuning, and simultaneous
-  CRC-gated decoding.
+- Added a compact, non-tuning 100–3000 Hz audio-activity waterfall,
+  digit-selectable Hamlib RF tuning, simultaneous CRC-gated decoding, and a
+  separate Signal Diagnostics window with RX constellation and OFDM carrier
+  quality plus generated-TX measurements.
+- Added automatic restoration of successful CAT, saved frequency/mode, and the
+  saved radio audio input. Automatic startup never keys PTT or transmits.
+- Added connectionless Reply Channel operation within ±10 kHz, explicit
+  BTY/EOC controls, a five-minute visible timeout, manual return, and safe
+  cancellation when the operator tunes the physical radio during split.
+- Added a remembered 10–100% TX audio-drive control whose 100% endpoint maps to
+  Aurora's validated 0.55 gain ceiling, plus an identified TUNE / TEST TX frame
+  for setting the radio while observing its physical ALC meter.
+- Added an original Aurora application icon to macOS, Windows, Ubuntu, and
+  Fedora application and installer builds.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 272 tests.
+- Expanded the automated regression suite to 301 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -88,7 +99,8 @@ Aurora is in active development. The repository provides the foundational
 project structure, adaptive OFDM modem research, a responsive operator
 interface, live radio-audio monitoring, multi-frequency decoding, and
 audio-only validation workflows. Aurora includes bundled Hamlib CAT/PTT
-control, but never connects to a radio or opens audio automatically.
+control. After a successful saved configuration, CAT and radio audio receive
+start automatically; PTT and transmission always require an operator action.
 
 ## Design goals
 
@@ -186,10 +198,10 @@ The initial receiver operates on complex baseband samples and provides:
 - Soft-input Viterbi FEC decoding
 - Sync, SNR, frequency-offset, and timing diagnostics
 
-Aurora now has complete development audio-to-message paths for known frame
-geometry: one-shot loopback and a bounded continuous multi-frequency receiver.
-Unknown-length framing, full over-the-air interoperability validation,
-automatic gain control, and mid-frame timing repair remain incomplete.
+Aurora now has complete development audio-to-message paths with protected
+variable-length bootstrap geometry: one-shot loopback and a bounded continuous
+multi-frequency receiver. Full over-the-air interoperability validation,
+automatic gain control, and additional field characterization remain incomplete.
 
 ## Audio
 
@@ -217,36 +229,58 @@ The radio layer provides:
 - Bundled Hamlib `rigctld` and operator-readable radio model selection
 - SQLite contact records with UTC timestamps and operating details
 
-Radio control is disconnected at startup. **PTT Control** is enabled by
-default, but SEND remains unavailable until the operator connects Hamlib.
-Aurora keys PTT only for an explicit SEND action and releases it after playback
-or an error.
+After a successful saved CAT configuration, Aurora starts its bundled or
+external Hamlib connection automatically and applies the saved frequency and
+mode. **PTT Control** is enabled by default, but Aurora keys PTT only for an
+explicit SEND, station-data, or TUNE / TEST TX action and always releases it
+after playback or an error.
 
-## Spectrum and waterfall
+## Audio activity and diagnostics
 
-Aurora includes a Hann-windowed FFT analyzer, live spectrum, and compact
-bounded waterfall driven only by the selected radio audio input. Aurora's TX
-and primary RX modem center is fixed at 1,500 Hz. The receiver scans compatible
-signal centers across the 100–3000 Hz working passband; primary-center traffic
-appears in Messages and other CRC-valid traffic appears in the independent
-Other Signals dock. The spectrum does not move the modem or transmitter.
-Aurora does not generate a pretend spectrum or open audio automatically.
+Aurora includes a compact bounded activity waterfall driven only by the selected
+radio audio input. The receiver scans compatible signal centers across the
+100–3000 Hz working passband; primary-center traffic appears in Messages and
+other CRC-valid traffic appears in the independent Other Signals dock. The
+waterfall does not tune the radio. After an input has been saved, Aurora starts
+audio receive automatically at launch; if that device is unavailable, it reports
+the problem and leaves manual selection available in Setup.
 
 ## Operator interface
 
 The compact main window shows radio frequency, radio mode, station callsign,
-occupied bandwidth, synchronization, SNR, frequency offset, timing, CRC, and
-FEC status. Messages and Other Signals are independently dockable and
-resizable. Click a radio-frequency digit and use the mouse wheel or Up/Down
+occupied bandwidth, Reply Channel controls, a minimal activity waterfall, and
+the message composer. Messages and Other Signals are independently dockable
+and resizable. Click a radio-frequency digit and use the mouse wheel or Up/Down
 keys to tune that digit through Hamlib; Left/Right selects another digit.
-Decoded-station actions retune USB or LSB so the selected signal moves to the
-1,500 Hz modem center. Select **SEND** or press Enter to transmit.
+Decoded-station actions retune USB or LSB to center the selected Aurora signal.
+Select **SEND** or press Enter to transmit.
+
+The main window retains a compact, read-only waterfall showing activity in the
+radio audio passband. **View > Signal Diagnostics** opens a separate read-only
+window with the equalized BPSK constellation, estimated SNR, frequency and
+timing offsets, CRC/FEC state, and relative OFDM subcarrier quality. Neither
+display controls tuning. Aurora uses the same original application icon on
+macOS, Windows, and Linux packages.
+
+The Audio setup tab includes a remembered **TX audio drive** control. Signal
+Diagnostics reports generated-TX peak, RMS, crest factor, clipping, linearity,
+bandwidth profile, and carrier count. These are local audio measurements, not a
+radio ALC reading: during a test transmission, the operator must watch the
+radio's physical ALC meter and reduce drive until it shows little or no ALC
+compression. The displayed 100% is Aurora's validated `0.55` internal gain
+ceiling, not full-scale normalized audio, and the control does not change RF
+power. **TUNE / TEST TX** sends a
+representative, callsign-identified Aurora OFDM test frame through the normal
+CAT/PTT path so this adjustment can be performed directly from Audio setup; it
+is blocked during an active Reply Channel contact.
 
 The **Setup** menu provides Station ID, CAT Control, and Audio tabs. These
 contain callsign/grid, named radio model, CAT serial and `rigctld` settings,
 PTT Control, radio audio devices, and live receiver controls. Aurora remembers
 operator, CAT, audio, tuning, bandwidth, theme, window, and dock settings using
-the platform-native settings store. Dark, Amber, and Green themes are
+the platform-native settings store. After a successful CAT connection, the next
+launch reconnects Hamlib automatically and applies the saved frequency and mode;
+it never keys PTT or transmits automatically. Dark, Amber, and Green themes are
 available.
 
 Aurora uses asynchronous frame acquisition rather than mandatory UTC transmit
@@ -304,6 +338,7 @@ protocol, signaling format, or interoperability specification.
 
 ```text
 Aurora/
+|-- assets/      Cross-platform Aurora application icon sources
 |-- audio/       Audio input and output
 |-- config/      Central application settings
 |-- docs/        Project documentation
@@ -315,7 +350,7 @@ Aurora/
 |-- radio/       Hamlib, CAT, PTT, serial ports, and contact records
 |-- tests/       Automated tests
 |-- util/        Shared utilities and logging setup
-|-- waterfall/   Waterfall and spectrum displays
+|-- waterfall/   Retained waterfall compatibility components
 |-- Aurora.sln   Visual Studio solution
 `-- README.md    Project overview
 ```

@@ -44,6 +44,9 @@ class MultichannelDecodeEvent:
     sync_metric: float
     frequency_offset_hz: float
     timing_offset_samples: float
+    equalized_symbols: tuple[complex, ...]
+    subcarrier_quality: tuple[float, ...]
+    snr_db: float
 
 
 def audio_center_limits(mode: ModeDefinition) -> tuple[int, int]:
@@ -208,6 +211,25 @@ class MultichannelAudioReceiver:
                     report = decode_reception_report(frame)
             except ValueError:
                 continue
+            symbols = np.asarray(recovered.symbols, dtype=np.complex128)
+            decisions = np.where(symbols.real >= 0.0, 1.0, -1.0)
+            gain = np.vdot(decisions, symbols) / max(len(symbols), 1)
+            residual = symbols - gain * decisions
+            signal_power = float(abs(gain) ** 2)
+            noise_power = float(np.mean(np.abs(residual) ** 2))
+            snr_db = (
+                float("inf")
+                if noise_power <= 0.0
+                else 10.0 * np.log10(max(signal_power, 1e-15) / noise_power)
+            )
+            carrier_count = len(config_for_mode(mode).data_subcarriers)
+            quality = []
+            normalized = symbols / gain if abs(gain) > 1e-12 else symbols
+            errors = np.minimum(abs(normalized - 1.0), abs(normalized + 1.0))
+            for index in range(carrier_count):
+                carrier_errors = errors[index::carrier_count]
+                mean_error = float(np.mean(carrier_errors)) if len(carrier_errors) else 1.0
+                quality.append(1.0 / (1.0 + mean_error))
             return MultichannelDecodeEvent(
                 frequency_hz,
                 message,
@@ -217,6 +239,9 @@ class MultichannelAudioReceiver:
                 recovered.diagnostics.sync_metric,
                 recovered.diagnostics.frequency_offset_hz,
                 recovered.diagnostics.timing_offset_samples,
+                tuple(complex(value) for value in symbols),
+                tuple(quality),
+                float(snr_db),
             )
         return None
 

@@ -28,8 +28,8 @@ def validate() -> None:
         raise RuntimeError("Native builds require Reply Channel chat metadata")
     if MAX_REPLY_OFFSET_HZ != 10_000:
         raise RuntimeError("Native builds require the ±10 kHz Reply Channel limit")
-    if DEFAULT_REPLY_WINDOW_SECONDS != 120:
-        raise RuntimeError("Native builds require the 120-second reply window default")
+    if DEFAULT_REPLY_WINDOW_SECONDS != 300:
+        raise RuntimeError("Native builds require the 300-second reply window default")
     if not callable(getattr(FakeSplitController, "restore", None)):
         raise RuntimeError("Native builds require manual fake-split restoration")
     print(

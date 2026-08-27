@@ -46,6 +46,7 @@ class PackagingTests(unittest.TestCase):
             (bundle / "Aurora").touch()
             (bundle / "rigctld").touch()
             (bundle / "SOURCE.txt").touch()
+            (bundle / "aurora-icon.png").touch()
             verify_bundle(bundle)
 
     def test_bundle_rejects_missing_hamlib(self) -> None:

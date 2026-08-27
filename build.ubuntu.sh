@@ -43,7 +43,7 @@ ln -s ../../opt/aurora/Aurora "$STAGE/usr/bin/aurora"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$ARCH/g" \
     packaging/linux/debian-control.in > "$STAGE/DEBIAN/control"
 install -m 0644 packaging/linux/aurora.desktop "$STAGE/usr/share/applications/aurora.desktop"
-install -m 0644 Aurora_logo.png "$STAGE/usr/share/icons/hicolor/256x256/apps/aurora.png"
+install -m 0644 assets/aurora-icon.png "$STAGE/usr/share/icons/hicolor/256x256/apps/aurora.png"
 dpkg-deb --build --root-owner-group "$STAGE" "$PACKAGE"
 dpkg-deb --info "$PACKAGE" >/dev/null
 echo "Installer complete: $PACKAGE"

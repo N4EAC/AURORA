@@ -31,6 +31,7 @@ if not VERSION_FILE.is_file():
 
 datas = [
     (str(PROJECT_ROOT / "Aurora_logo.png"), "."),
+    (str(PROJECT_ROOT / "assets" / "aurora-icon.png"), "assets"),
     (str(VERSION_FILE), "."),
 ]
 binaries = [(str(RIGCTLD), f"runtime/hamlib/{PLATFORM_KEY}/bin")]
@@ -73,6 +74,7 @@ executable = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=str(PROJECT_ROOT / "assets" / "aurora.ico") if platform.system() == "Windows" else None,
 )
 collection = COLLECT(
     executable,
@@ -88,6 +90,7 @@ if platform.system() == "Darwin":
         collection,
         name="Aurora.app",
         bundle_identifier="org.n4eac.aurora",
+        icon=str(PROJECT_ROOT / "assets" / "aurora.icns"),
         info_plist={
             "CFBundleDisplayName": "Aurora",
             "CFBundleName": "Aurora",
