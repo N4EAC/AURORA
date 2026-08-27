@@ -2,6 +2,12 @@
   <img src="Aurora_logo.png" alt="Aurora logo" width="700">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square&logo=windows11&logoColor=white" alt="Windows supported">
+  <img src="https://img.shields.io/badge/macOS-supported-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS supported">
+  <img src="https://img.shields.io/badge/Linux-supported-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux supported">
+</p>
+
 Platform installer instructions are documented in [docs/building.md](docs/building.md).
 
 # Aurora
@@ -34,7 +40,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 305 tests.
+- Expanded the automated regression suite to 306 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded

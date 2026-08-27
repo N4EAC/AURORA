@@ -132,6 +132,16 @@ class PackagingTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Debian-compatible"):
                 BUILD_PREFLIGHT_MODULE.validate("Ubuntu", "0.1.0", os_release)
 
+    def test_rpm_treats_frozen_dependencies_as_prebuilt_binaries(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        template = (project_root / "packaging/linux/aurora-rpm.spec.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("%global debug_package %{nil}", template)
+        self.assertIn("%global _build_id_links none", template)
+        self.assertIn("%global __strip /bin/true", template)
+        self.assertIn("%changelog", template)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,7 @@
+%global debug_package %{nil}
+%global _build_id_links none
+%global __strip /bin/true
+
 Name:           aurora-hf-modem
 Version:        @RPM_VERSION@
 Release:        1%{?dist}
@@ -27,3 +31,7 @@ install -m 0644 aurora.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/au
 %{_bindir}/aurora
 %{_datadir}/applications/aurora.desktop
 %{_datadir}/icons/hicolor/256x256/apps/aurora.png
+
+%changelog
+* Thu Aug 27 2026 Aurora contributors - @RPM_VERSION@-1
+- Package the self-contained Aurora desktop application.
