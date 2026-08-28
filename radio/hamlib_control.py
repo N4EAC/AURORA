@@ -7,6 +7,9 @@ import threading
 from typing import Callable
 
 
+DEFAULT_RADIO_PASSBAND_HZ = 3_000
+
+
 class HamlibError(RuntimeError):
     """Raised when rigctld rejects a command or returns invalid data."""
 

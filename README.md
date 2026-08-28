@@ -40,7 +40,7 @@ weak-signal communication under real-world HF propagation conditions.
 - Bundled pinned Hamlib and added DMG, DEB, RPM, and Inno Setup build workflows.
 - Added periodic OFDM payload pilots, bounded clock-drift tracking, enforced
   transmit-audio linearity limits, and seeded bootstrap characterization.
-- Expanded the automated regression suite to 306 tests.
+- Expanded the automated regression suite to 311 tests.
 
 - Replaced Aurora's unreleased single-carrier primary waveform with a
   provisional adaptive cyclic-prefix OFDM physical layer. It selects bounded
@@ -237,25 +237,32 @@ The radio layer provides:
 
 After a successful saved CAT configuration, Aurora starts its bundled or
 external Hamlib connection automatically and applies the saved frequency and
-mode. **PTT Control** is enabled by default, but Aurora keys PTT only for an
-explicit SEND, station-data, or TUNE / TEST TX action and always releases it
-after playback or an error.
+mode. At connection time Aurora initializes the radio receive filter to 3.0 kHz
+once. Later modem TX-bandwidth selections never change the radio filter, and
+frequency/mode Apply preserves the filter width currently reported by CAT.
+**PTT Control** is enabled by default, but Aurora keys PTT only for an explicit
+SEND, station-data, or TUNE / TEST TX action and always releases it after
+playback or an error.
 
 ## Audio activity and diagnostics
 
 Aurora includes a compact bounded activity waterfall driven only by the selected
 radio audio input. The receiver scans compatible signal centers across the
-100–3000 Hz working passband; primary-center traffic appears in Messages and
-other CRC-valid traffic appears in the independent Other Signals dock. The
-waterfall does not tune the radio. After an input has been saved, Aurora starts
-audio receive automatically at launch; if that device is unavailable, it reports
-the problem and leaves manual selection available in Setup.
+100–3000 Hz working passband using all three Aurora occupied-bandwidth profiles;
+the TX-bandwidth selector does not restrict receive decoding. Primary-center
+traffic appears in Messages and other CRC-valid traffic appears in the
+independent Other Signals dock. The waterfall does not tune the radio. After an
+input has been saved, Aurora starts audio receive automatically at launch; if
+that device is unavailable, it reports the problem and leaves manual selection
+available in Setup.
 
 ## Operator interface
 
 The compact main window shows radio frequency, radio mode, station callsign,
-occupied bandwidth, Reply Channel controls, a minimal activity waterfall, and
-the message composer. Messages and Other Signals are independently dockable
+TX occupied bandwidth, Reply Channel controls, a minimal activity waterfall,
+and the message composer. The TX-bandwidth selector controls only Aurora's
+generated modulation; it is not a radio receive-filter control. Messages and
+Other Signals are independently dockable
 and resizable. Click a radio-frequency digit and use the mouse wheel or Up/Down
 keys to tune that digit through Hamlib; Left/Right selects another digit.
 Decoded-station actions retune USB or LSB to center the selected Aurora signal.
@@ -268,7 +275,10 @@ timing offsets, CRC/FEC state, and relative OFDM subcarrier quality. Neither
 display controls tuning. Aurora uses the same original application icon on
 macOS, Windows, and Linux packages.
 
-The Audio setup tab includes a remembered **TX audio drive** control. Signal
+The Audio setup tab includes remembered **RX audio level** and **TX audio
+drive** controls. RX audio level applies 10–200% software gain after capture to
+the decoder and displays; it does not change the radio or operating-system input
+control. Signal
 Diagnostics reports generated-TX peak, RMS, crest factor, clipping, linearity,
 bandwidth profile, and carrier count. These are local audio measurements, not a
 radio ALC reading: during a test transmission, the operator must watch the

@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from radio.audio_tuning import MAX_AUDIO_HZ, MIN_AUDIO_HZ, MODEM_AUDIO_CENTER_HZ
+from radio.hamlib_control import DEFAULT_RADIO_PASSBAND_HZ
 from modem.chat_transport import CHAT_VERSION
 from modem.contact_session import (
     DEFAULT_REPLY_WINDOW_SECONDS,
@@ -28,6 +29,8 @@ def validate() -> None:
         raise RuntimeError("Native builds require Reply Channel chat metadata")
     if MAX_REPLY_OFFSET_HZ != 10_000:
         raise RuntimeError("Native builds require the ±10 kHz Reply Channel limit")
+    if DEFAULT_RADIO_PASSBAND_HZ != 3_000:
+        raise RuntimeError("Native builds require the 3 kHz startup radio passband")
     if DEFAULT_REPLY_WINDOW_SECONDS != 300:
         raise RuntimeError("Native builds require the 300-second reply window default")
     if not callable(getattr(FakeSplitController, "restore", None)):
@@ -36,6 +39,7 @@ def validate() -> None:
         "Verified operator tuning: Hamlib RF dial, "
         f"fixed {MODEM_AUDIO_CENTER_HZ} Hz modem center, "
         f"{MIN_AUDIO_HZ}–{MAX_AUDIO_HZ} Hz receive scan, "
+        f"{DEFAULT_RADIO_PASSBAND_HZ} Hz startup radio passband, "
         f"Reply Channel ±{MAX_REPLY_OFFSET_HZ // 1_000} kHz with local return"
     )
 

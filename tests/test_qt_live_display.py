@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QDockWidget, QLabel
 
 from audio.buffer import AudioBuffer
 from gui.qt_application import AuroraQtWindow
+from radio.hamlib_control import DEFAULT_RADIO_PASSBAND_HZ
 
 
 class QtLiveDisplayTests(unittest.TestCase):
@@ -46,6 +47,7 @@ class QtLiveDisplayTests(unittest.TestCase):
         self.assertTrue(window.ptt_arm.isChecked())
         self.assertEqual(window.reply_channel_enabled.text(), "REPLY CHANNEL: OFF")
         self.assertEqual(window.reply_window.value(), 300)
+        self.assertEqual(window.rx_audio_level.value(), 100)
         self.assertEqual(window.tx_audio_level.value(), 100)
         self.assertEqual(window.tx_test_button.text(), "TUNE / TEST TX")
         self.assertNotIn(
@@ -60,6 +62,18 @@ class QtLiveDisplayTests(unittest.TestCase):
             [action.text() for action in window.menuBar().actions()],
             ["File", "Setup", "View", "Theme", "About"],
         )
+        window.close()
+
+    def test_rx_audio_level_scales_decode_and_display_samples(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window.rx_audio_level.setValue(150)
+        source = AudioBuffer(np.array([0.2, -0.4], dtype=np.float32), 12_000)
+        window._receive_audio(source)
+        decoded = window._audio_blocks.get_nowait()
+        displayed = window._display_blocks.get_nowait()
+        np.testing.assert_allclose(decoded.samples, [0.3, -0.6])
+        np.testing.assert_allclose(displayed.samples, [0.3, -0.6])
+        np.testing.assert_allclose(source.samples, [0.2, -0.4])
         window.close()
 
     def test_generated_tx_audio_updates_read_only_diagnostics(self) -> None:
@@ -124,6 +138,29 @@ class QtLiveDisplayTests(unittest.TestCase):
         playback.assert_called_once_with(audio, 4)
         self.assertIn("observe the radio ALC meter", window.history.toPlainText())
         window._hamlib = None
+        window.close()
+
+    def test_send_clears_message_only_after_transmission_is_accepted(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        window._hamlib = MagicMock()
+        output = MagicMock(index=4)
+        window.output_device.addItem("Radio Output")
+        window.output_device.setCurrentText("Radio Output")
+        window._output_devices["Radio Output"] = output
+        window.canned_message.setCurrentText("Custom")
+        window.message.setText("First message")
+        with (
+            patch.object(window, "_build_transmit_audio", return_value=MagicMock()),
+            patch.object(window, "_start_radio_playback") as playback,
+        ):
+            window._transmit()
+        playback.assert_called_once()
+        self.assertEqual(window.message.text(), "")
+
+        window.message.setText("Keep this message")
+        window._hamlib = None
+        window._transmit()
+        self.assertEqual(window.message.text(), "Keep this message")
         window.close()
 
     def test_view_menu_opens_read_only_signal_diagnostics(self) -> None:
@@ -278,6 +315,7 @@ class QtLiveDisplayTests(unittest.TestCase):
         first.longitude.setText("-72.2")
         first.bandwidth.setCurrentText("2.3 kHz")
         first.radio_frequency.setValue(7_074_000)
+        first.rx_audio_level.setValue(135)
         first.tx_audio_level.setValue(42)
         first._apply_theme("Amber")
         first.close()
@@ -290,9 +328,38 @@ class QtLiveDisplayTests(unittest.TestCase):
         self.assertEqual(second.longitude.text(), "-72.2")
         self.assertEqual(second.bandwidth.currentText(), "2.3 kHz")
         self.assertEqual(second.radio_frequency.value(), 7_074_000)
+        self.assertEqual(second.rx_audio_level.value(), 135)
         self.assertEqual(second.tx_audio_level.value(), 42)
         self.assertEqual(second.preferences.value("appearance/theme"), "Amber")
         second.close()
+
+    def test_radio_apply_preserves_cat_passband_not_tx_bandwidth(self) -> None:
+        window = AuroraQtWindow(preferences=self.preferences)
+        controller = MagicMock()
+        window._hamlib = controller
+        window._last_cat_status = (7_117_000, "USB-D", 2_900, False)
+        window.radio_frequency.setValue(7_118_000)
+        window.radio_mode.setCurrentText("USB-D")
+        window.bandwidth.setCurrentText("500 Hz")
+        with patch("gui.qt_application.threading.Thread") as thread:
+            window._apply_radio_settings()
+        worker = thread.call_args.kwargs["target"]
+        worker()
+        controller.set_frequency.assert_called_once_with(7_118_000)
+        controller.set_mode.assert_called_once_with("USB-D", 2_900)
+        window._hamlib = None
+        window.close()
+
+    def test_cat_start_initializes_radio_passband_to_three_khz_once(self) -> None:
+        controller = MagicMock()
+        controller.get_frequency.return_value = 7_117_000
+        controller.get_mode.side_effect = (("USB-D", 2_400), ("USB-D", 3_000))
+        controller.get_ptt.return_value = False
+        status = AuroraQtWindow._initialize_radio_status(controller)
+        controller.set_mode.assert_called_once_with(
+            "USB-D", DEFAULT_RADIO_PASSBAND_HZ
+        )
+        self.assertEqual(status, (7_117_000, "USB-D", 3_000, False))
 
     def test_stale_reply_frequency_is_not_restored_as_split(self) -> None:
         self.preferences.setValue("radio/frequency_hz", 7_111_000)

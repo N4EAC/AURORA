@@ -25,6 +25,17 @@ mode without requiring the Setup dialog. A failed configuration is not promoted
 to the automatic-start path. Automatic CAT startup never keys PTT and never
 initiates a transmission.
 
+Aurora initializes the radio receive passband to 3,000 Hz once when CAT
+connects. After that initialization, Aurora preserves the passband reported by
+Hamlib. Changing Aurora's 500 Hz, 2.3 kHz, 2.8 kHz, or automatic TX occupied-
+bandwidth profile never changes the radio filter, and Reply Channel frequency
+routing does not change it either.
+
+The remembered RX audio level applies 10–200% software gain to captured samples
+before decoding and display. It does not operate the radio gain or the platform
+audio mixer, so physical input clipping must still be corrected at the radio or
+operating-system input control.
+
 Aurora's saved TX audio drive control adjusts sound-device modulation level,
 not RF power. Its user-facing 100% maps to Aurora's validated `0.55` internal
 gain ceiling rather than full-scale normalized audio. Generated-waveform

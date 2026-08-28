@@ -50,11 +50,9 @@ from PySide6.QtWidgets import (
 
 from config import SETTINGS, AppSettings
 from audio.buffer import AudioBuffer
+from audio.adaptive_receiver import AdaptiveBandwidthAudioReceiver
 from audio.device import compatible_outputs, list_audio_devices
-from audio.multichannel_receiver import (
-    MultichannelAudioReceiver,
-    mode_at_frequency,
-)
+from audio.multichannel_receiver import mode_at_frequency
 from audio.playback import condition_playback, play_audio, stop_playback
 from audio.streaming import AudioInputStream, AudioStreamStatus
 from dsp.spectrum import SpectrumFrame, compute_spectrum
@@ -70,7 +68,7 @@ from modem.contact_session import (
     TurnState,
 )
 from modem.station_data import StationData, encode_station_air_transmission
-from radio.hamlib_control import HamlibController
+from radio.hamlib_control import DEFAULT_RADIO_PASSBAND_HZ, HamlibController
 from radio.bundled_hamlib import BundledHamlibConfig, BundledHamlibService
 from radio.hamlib_models import list_radio_models
 from radio.audio_tuning import MODEM_AUDIO_CENTER_HZ, dial_frequency_for_audio_center
@@ -283,7 +281,7 @@ class AuroraQtWindow(QMainWindow):
         self._display_blocks: queue.Queue[AudioBuffer] = queue.Queue(maxsize=1)
         self._decode_events: queue.Queue[object] = queue.Queue()
         self._cat_events: queue.Queue[object] = queue.Queue()
-        self._receiver: MultichannelAudioReceiver | None = None
+        self._receiver: AdaptiveBandwidthAudioReceiver | None = None
         self._stream: AudioInputStream | None = None
         self._hamlib: HamlibController | None = None
         self._hamlib_service: BundledHamlibService | None = None
@@ -373,7 +371,7 @@ class AuroraQtWindow(QMainWindow):
             ("Frequency", self.radio_frequency),
             ("Mode", self.radio_mode),
             ("Station", self.callsign_display),
-            ("Bandwidth", self.bandwidth),
+            ("TX bandwidth", self.bandwidth),
         ):
             operating_row.addWidget(QLabel(label))
             operating_row.addWidget(widget)
@@ -483,6 +481,21 @@ class AuroraQtWindow(QMainWindow):
         self.output_device = QComboBox()
         audio_form.addRow("Radio input", self.input_device)
         audio_form.addRow("Radio output", self.output_device)
+        rx_level_row = QHBoxLayout()
+        self.rx_audio_level = QSlider(Qt.Horizontal)
+        self.rx_audio_level.setRange(10, 200)
+        self.rx_audio_level.setValue(100)
+        self.rx_audio_level.setToolTip(
+            "Software gain applied after audio capture; this does not change the "
+            "radio or operating-system input control."
+        )
+        self.rx_audio_level_value = QLabel("100%")
+        self.rx_audio_level.valueChanged.connect(
+            lambda value: self.rx_audio_level_value.setText(f"{value}%")
+        )
+        rx_level_row.addWidget(self.rx_audio_level, 1)
+        rx_level_row.addWidget(self.rx_audio_level_value)
+        audio_form.addRow("RX audio level", rx_level_row)
         tx_level_row = QHBoxLayout()
         self.tx_audio_level = QSlider(Qt.Horizontal)
         self.tx_audio_level.setRange(10, 100)
@@ -788,6 +801,7 @@ class AuroraQtWindow(QMainWindow):
         self.ptt_arm.setChecked(self._stored_bool(p.value("cat/ptt_control"), True))
         self.input_device.setCurrentText(str(p.value("audio/input", self.input_device.currentText())))
         self.output_device.setCurrentText(str(p.value("audio/output", self.output_device.currentText())))
+        self.rx_audio_level.setValue(int(p.value("audio/rx_level_percent", 100)))
         saved_tx_drive = int(p.value("audio/tx_drive_percent", 100))
         scale_version = int(p.value("audio/tx_drive_scale_version", 1))
         if scale_version < TX_DRIVE_SCALE_VERSION:
@@ -825,6 +839,7 @@ class AuroraQtWindow(QMainWindow):
             "cat/ptt_control": self.ptt_arm.isChecked(),
             "audio/input": self.input_device.currentText(),
             "audio/output": self.output_device.currentText(),
+            "audio/rx_level_percent": self.rx_audio_level.value(),
             "audio/tx_drive_percent": self.tx_audio_level.value(),
             "audio/tx_drive_scale_version": TX_DRIVE_SCALE_VERSION,
             "window/geometry": self.saveGeometry(),
@@ -974,15 +989,17 @@ class AuroraQtWindow(QMainWindow):
 
     def _receive_audio(self, audio: AudioBuffer) -> None:
         """Fan one radio-audio block out to decoding and latest-frame display."""
-        self._audio_blocks.put(audio)
+        gain = self.rx_audio_level.value() / 100.0
+        adjusted = AudioBuffer(audio.samples * gain, audio.sample_rate)
+        self._audio_blocks.put(adjusted)
         try:
-            self._display_blocks.put_nowait(audio)
+            self._display_blocks.put_nowait(adjusted)
         except queue.Full:
             try:
                 self._display_blocks.get_nowait()
             except queue.Empty:
                 pass
-            self._display_blocks.put_nowait(audio)
+            self._display_blocks.put_nowait(adjusted)
 
     def _update_live_display(self) -> None:
         latest = None
@@ -1040,9 +1057,8 @@ class AuroraQtWindow(QMainWindow):
             return
         try:
             device = self._input_devices[self.input_device.currentText()]
-            mode = self._selected_mode()
-            self._receiver = MultichannelAudioReceiver(
-                tuple(range(100, 3_001, 100)), mode
+            self._receiver = AdaptiveBandwidthAudioReceiver(
+                tuple(range(100, 3_001, 100))
             )
             self._receiver_stop.clear()
             self._stream = AudioInputStream(
@@ -1079,7 +1095,10 @@ class AuroraQtWindow(QMainWindow):
 
         threading.Thread(target=worker, name="AuroraQtSpectrumReceiver", daemon=True).start()
         self.rx_button.setText("STOP AUDIO RX")
-        self._append(f"[RX] Live radio audio: {device.name}; scanning 100–3000 Hz.")
+        self._append(
+            f"[RX] Live radio audio: {device.name}; scanning 100–3000 Hz "
+            "for all Aurora bandwidths."
+        )
 
     def _restore_audio_automatically(self) -> None:
         """Start receive monitoring from the saved radio input at launch."""
@@ -1223,11 +1242,7 @@ class AuroraQtWindow(QMainWindow):
                     service = BundledHamlibService()
                     service.start(BundledHamlibConfig(model, device, baud, port))
                 controller = HamlibController(host, port)
-                status = (
-                    controller.get_frequency(),
-                    *controller.get_mode(),
-                    controller.get_ptt(),
-                )
+                status = self._initialize_radio_status(controller)
                 self._cat_events.put(("connected", controller, service, status))
             except Exception as error:
                 if service is not None:
@@ -1235,6 +1250,17 @@ class AuroraQtWindow(QMainWindow):
                 self._cat_events.put(("cat_error", error))
 
         threading.Thread(target=worker, name="AuroraHamlibConnect", daemon=True).start()
+
+    @staticmethod
+    def _initialize_radio_status(
+        controller: HamlibController,
+    ) -> tuple[int, str, int, bool]:
+        """Set the one-time 3 kHz startup filter and return CAT readback."""
+        frequency = controller.get_frequency()
+        mode, _ = controller.get_mode()
+        controller.set_mode(mode, DEFAULT_RADIO_PASSBAND_HZ)
+        mode, passband = controller.get_mode()
+        return frequency, mode, passband, controller.get_ptt()
 
     def _restore_cat_automatically(self) -> None:
         """Reconnect a previously successful CAT setup without opening Setup."""
@@ -1320,7 +1346,9 @@ class AuroraQtWindow(QMainWindow):
         controller = self._hamlib
         frequency = self.radio_frequency.value()
         mode = self.radio_mode.currentText()
-        passband = self._selected_mode().occupied_bandwidth_hz
+        passband = DEFAULT_RADIO_PASSBAND_HZ
+        if self._last_cat_status is not None and self._last_cat_status[2] > 0:
+            passband = self._last_cat_status[2]
 
         def worker() -> None:
             try:
@@ -1388,12 +1416,9 @@ class AuroraQtWindow(QMainWindow):
             self.contact_status.setText("SIMPLEX")
             self._append("[CONTACT] Split state cleared locally; Hamlib is disconnected.")
             return
-        passband_hz = self._selected_mode().occupied_bandwidth_hz
-
         def worker() -> None:
             try:
                 FakeSplitController(controller).restore(session.normal_frequency_hz)
-                controller.set_mode(session.normal_mode, passband_hz)
                 self._cat_events.put(("normal_restored", session.normal_frequency_hz))
             except Exception as error:
                 self._cat_events.put(("cat_error", error))
@@ -1784,6 +1809,7 @@ class AuroraQtWindow(QMainWindow):
             back_to_you=back_to_you,
             end_of_call=end_of_call,
         )
+        self.message.clear()
         self._append(
             f"[TX {MODEM_AUDIO_CENTER_HZ} Hz/{self.callsign.text()}] "
             f"{prepared.text}",
